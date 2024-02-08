@@ -1,0 +1,6 @@
+[server]
+listen = "0.0.0.0:5353"
+
+[[rules]]
+domain = "*"
+filter = "default"

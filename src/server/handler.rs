@@ -7,7 +7,7 @@ use crate::Result;
 
 #[async_trait]
 pub trait Handler: Send + Sync + 'static {
-    async fn handle(&self, request: &Message) -> Result<Message>;
+    async fn handle(&self, request: &mut Message) -> Result<Option<Message>>;
 }
 
 pub struct Server<H> {
@@ -40,11 +40,14 @@ where
                 Ok((n, peer)) => {
                     info!("recv {} bytes from peer {:?}", n, peer);
                     let b = buf.split_to(n).freeze();
-                    let req = Message::from(b);
+                    let mut req = Message::from(b);
 
-                    let resp = h.handle(&req).await?;
+                    let res = h.handle(&mut req).await?;
 
-                    socket.send_to(resp.as_ref(), peer).await?;
+                    // TODO: handle no result
+                    socket
+                        .send_to(res.expect("no record resolved").as_ref(), peer)
+                        .await?;
                 }
                 Err(e) => {
                     error!("server stopped: {:?}", e);
