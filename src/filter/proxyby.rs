@@ -151,8 +151,15 @@ mod tests {
             Message::from(Bytes::from(raw))
         };
 
-        let f = ProxyByFilter::default();
+        let opts = toml::from_str::<Options>(
+            r#"
+        servers = ["223.5.5.5"]
+        "#,
+        )
+        .unwrap();
 
+        let factory = ProxyByFilterFactory::new(&opts).unwrap();
+        let f = factory.get().unwrap();
         let resp = f.on_request(&mut ctx, &mut req).await;
 
         assert!(resp.is_ok_and(|res| res.is_some_and(|record| {

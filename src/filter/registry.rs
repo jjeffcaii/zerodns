@@ -118,7 +118,7 @@ mod tests {
         init();
 
         register("foobar", |opts: &Options| Ok(MockFilterFactory {}));
-        let res = load("foobar", &());
+        let res = load("foobar", &Default::default());
         assert!(res.is_ok_and(|g| g.get_boxed().is_ok()));
     }
 }
