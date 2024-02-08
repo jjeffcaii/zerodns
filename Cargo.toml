@@ -3,8 +3,6 @@ name = "zerodns"
 version = "0.1.0"
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
 log = "0.4.20"
 slog = "2.7.0"
@@ -26,8 +24,10 @@ smallvec = { version = "1.13.1", features = ["write"] }
 mlua = { version = "0.9", features = ["luajit", "vendored", "serialize", "async", "macros", "send", "parking_lot"] }
 ahash = "0.8"
 hashbrown = "0.14"
-
-hex = "0.4.3"
-pretty_env_logger = "0.5.0"
+serde = { version = "1.0.196", features = ["derive"] }
+toml = "0.8.10"
+glob = "0.3.1"
 
 [dev-dependencies]
+hex = "0.4.3"
+pretty_env_logger = "0.5.0"

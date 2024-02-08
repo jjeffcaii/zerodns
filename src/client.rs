@@ -1,19 +1,18 @@
+use std::net::SocketAddr;
+
 use byteorder::{BigEndian, ByteOrder};
 use bytes::BytesMut;
-use tokio::net::{ToSocketAddrs, UdpSocket};
+use tokio::net::UdpSocket;
 
 use crate::protocol::Message;
 use crate::Result;
 
-pub struct Client<A> {
-    addr: A,
+pub struct Client {
+    addr: SocketAddr,
     buf: BytesMut,
 }
 
-impl<A> Client<A>
-where
-    A: ToSocketAddrs,
-{
+impl Client {
     pub async fn request(&mut self, req: &Message) -> Result<Message> {
         let socket = UdpSocket::bind("0.0.0.0:0").await?;
         socket.connect(&self.addr).await?;
@@ -29,11 +28,8 @@ where
     }
 }
 
-impl<A> From<A> for Client<A>
-where
-    A: ToSocketAddrs,
-{
-    fn from(addr: A) -> Self {
+impl From<SocketAddr> for Client {
+    fn from(addr: SocketAddr) -> Self {
         Self {
             addr,
             buf: BytesMut::with_capacity(4096),

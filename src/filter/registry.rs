@@ -8,7 +8,7 @@ use crate::filter::Filter;
 use crate::Result;
 
 // TODO: define options structure
-pub type Options = ();
+pub type Options = HashMap<String, toml::Value>;
 
 type Generator = Arc<dyn Send + Sync + Fn(&Options) -> Result<Box<dyn FilterFactoryExt>>>;
 

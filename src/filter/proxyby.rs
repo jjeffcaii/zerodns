@@ -1,4 +1,9 @@
+use std::net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6};
+use std::sync::Arc;
+
 use async_trait::async_trait;
+use smallvec::SmallVec;
+use toml::Value;
 
 use crate::client::Client;
 use crate::protocol::Message;
@@ -8,15 +13,32 @@ use super::{Context, Filter, FilterFactory, Options};
 
 #[derive(Default)]
 pub(crate) struct ProxyByFilter {
+    upstreams: Arc<Vec<SocketAddr>>,
     next: Option<Box<dyn Filter>>,
 }
 
 #[async_trait]
 impl Filter for ProxyByFilter {
-    async fn on_request(&self, _ctx: &mut Context, req: &mut Message) -> Result<Option<Message>> {
-        let mut c = Client::from("223.5.5.5:53");
-        let resp = c.request(req).await?;
-        Ok(Some(resp))
+    async fn on_request(&self, _: &mut Context, req: &mut Message) -> Result<Option<Message>> {
+        for addr in self.upstreams.iter() {
+            let mut c = Client::from(Clone::clone(addr));
+            if let Ok(res) = c.request(req).await {
+                if log_enabled!(log::Level::Debug) {
+                    let mut v = SmallVec::<[u8; 64]>::new();
+                    for (i, next) in req.queries().name().enumerate() {
+                        if i != 0 {
+                            v.push(b'.');
+                        }
+                        v.extend_from_slice(next);
+                    }
+                    debug!("proxyby ok: server={:?}, domain={}", addr, unsafe {
+                        std::str::from_utf8_unchecked(&v[..])
+                    });
+                }
+                return Ok(Some(res));
+            }
+        }
+        Ok(None)
     }
 
     async fn on_response(&self, ctx: &mut Context, res: &mut Option<Message>) -> Result<()> {
@@ -31,11 +53,66 @@ impl Filter for ProxyByFilter {
     }
 }
 
-pub(crate) struct ProxyByFilterFactory {}
+pub(crate) struct ProxyByFilterFactory {
+    upstreams: Arc<Vec<SocketAddr>>,
+}
 
 impl ProxyByFilterFactory {
-    pub fn new(_opts: &Options) -> Self {
-        Self {}
+    pub fn new(opts: &Options) -> Result<Self> {
+        const KEY_SERVERS: &str = "servers";
+
+        let mut upstreams: Vec<SocketAddr> = Default::default();
+
+        match opts.get(KEY_SERVERS) {
+            None => bail!("missing property '{}'", KEY_SERVERS),
+            Some(v) => match v {
+                Value::Array(arr) => {
+                    for it in arr {
+                        match it {
+                            Value::String(s) => {
+                                let mut addr = None;
+
+                                match s.parse::<SocketAddr>() {
+                                    Ok(it) => {
+                                        addr.replace(it);
+                                    }
+                                    Err(_) => {
+                                        if let Ok(it) = s.parse::<IpAddr>() {
+                                            let vv = match it {
+                                                IpAddr::V4(ip) => {
+                                                    SocketAddr::V4(SocketAddrV4::new(ip, 53))
+                                                }
+                                                IpAddr::V6(ip) => {
+                                                    SocketAddr::V6(SocketAddrV6::new(ip, 53, 0, 0))
+                                                }
+                                            };
+                                            addr.replace(vv);
+                                        }
+                                    }
+                                }
+
+                                match addr {
+                                    Some(addr) => {
+                                        upstreams.push(addr);
+                                    }
+                                    None => bail!("invalid server '{}'", s),
+                                }
+                            }
+                            _ => bail!("invalid format of property '{}'", KEY_SERVERS),
+                        }
+                    }
+                }
+                _ => bail!("invalid format of property '{}'", KEY_SERVERS),
+            },
+        }
+
+        if upstreams.is_empty() {
+            bail!("invalid format of property '{}'", KEY_SERVERS);
+        }
+
+        Ok(Self {
+            upstreams: Arc::new(upstreams),
+        })
     }
 }
 
@@ -43,7 +120,10 @@ impl FilterFactory for ProxyByFilterFactory {
     type Item = ProxyByFilter;
 
     fn get(&self) -> Result<Self::Item> {
-        Ok(ProxyByFilter::default())
+        Ok(ProxyByFilter {
+            upstreams: Clone::clone(&self.upstreams),
+            next: None,
+        })
     }
 }
 

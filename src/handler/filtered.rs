@@ -3,8 +3,8 @@ use std::collections::VecDeque;
 use async_trait::async_trait;
 
 use crate::filter::{Context, Filter, Options};
+use crate::handler::Handler;
 use crate::protocol::Message;
-use crate::server::Handler;
 use crate::Result;
 
 pub(crate) struct FilteredHandler {
@@ -12,7 +12,7 @@ pub(crate) struct FilteredHandler {
 }
 
 impl FilteredHandler {
-    pub fn builder() -> FilteredHandlerBuilder {
+    pub(crate) fn builder() -> FilteredHandlerBuilder {
         FilteredHandlerBuilder {
             filters: Default::default(),
         }
@@ -34,14 +34,14 @@ pub(crate) struct FilteredHandlerBuilder {
 }
 
 impl FilteredHandlerBuilder {
-    pub fn append<T>(self, next: T) -> Self
+    pub(crate) fn append<T>(self, next: T) -> Self
     where
         T: Filter,
     {
         self.append_boxed(Box::new(next))
     }
 
-    pub fn append_with<S>(self, name: S, opts: &Options) -> Self
+    pub(crate) fn append_with<S>(self, name: S, opts: &Options) -> Self
     where
         S: AsRef<str>,
     {
@@ -61,12 +61,12 @@ impl FilteredHandlerBuilder {
         }
     }
 
-    pub fn append_boxed(mut self, next: Box<dyn Filter>) -> Self {
+    pub(crate) fn append_boxed(mut self, next: Box<dyn Filter>) -> Self {
         self.filters.push_back(next);
         self
     }
 
-    pub fn build(self) -> Option<FilteredHandler> {
+    pub(crate) fn build(self) -> Option<FilteredHandler> {
         let Self { mut filters } = self;
 
         match filters.pop_front() {

@@ -1,14 +1,9 @@
-use async_trait::async_trait;
 use bytes::BytesMut;
 use tokio::net::UdpSocket;
 
+use crate::handler::Handler;
 use crate::protocol::Message;
 use crate::Result;
-
-#[async_trait]
-pub trait Handler: Send + Sync + 'static {
-    async fn handle(&self, request: &mut Message) -> Result<Option<Message>>;
-}
 
 pub struct Server<H> {
     h: H,
@@ -33,12 +28,12 @@ where
     pub async fn run(self) -> Result<()> {
         let Self { h, socket, mut buf } = self;
 
-        info!("dns server is listening on {:?}", &socket);
+        info!("dns handler is listening on {:?}", &socket);
 
         loop {
             match socket.recv_buf_from(&mut buf).await {
                 Ok((n, peer)) => {
-                    info!("recv {} bytes from peer {:?}", n, peer);
+                    debug!("recv {} bytes from peer {:?}", n, peer);
                     let b = buf.split_to(n).freeze();
                     let mut req = Message::from(b);
 
@@ -50,7 +45,7 @@ where
                         .await?;
                 }
                 Err(e) => {
-                    error!("server stopped: {:?}", e);
+                    error!("handler stopped: {:?}", e);
                     break;
                 }
             }

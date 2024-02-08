@@ -1,6 +1,18 @@
 [server]
-listen = "0.0.0.0:5353"
+listen = "0.0.0.0:5354"
+
+[filters.china]
+kind = "proxyby"
+props = { servers = ["223.5.5.5", "223.6.6.6"] }
+
+[filters.google]
+kind = "proxyby"
+props = { servers = ["8.8.8.8", "8.8.4.4"] }
+
+[[rules]]
+domain = "*google.com"
+filter = "google"
 
 [[rules]]
 domain = "*"
-filter = "default"
+filter = "china"

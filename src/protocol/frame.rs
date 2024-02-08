@@ -3,11 +3,12 @@ use bytes::Bytes;
 
 // http://www.tcpipguide.com/free/t_DNSMessagingandMessageResourceRecordandMasterFileF.htm
 
+#[allow(clippy::upper_case_acronyms)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Type {
     /// a host address
     A = 1,
-    /// an authoritative name server
+    /// an authoritative name handler
     NS = 2,
     /// a mail destination
     MD = 3,

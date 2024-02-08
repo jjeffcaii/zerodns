@@ -15,19 +15,44 @@ extern crate anyhow;
 #[macro_use]
 extern crate log;
 
+use std::path::PathBuf;
+
+use clap::{Parser, Subcommand};
 use slog::Drain;
 use tokio::net::UdpSocket;
 
-use crate::server::{FilteredHandler, Server};
+use server::Server;
+
+use crate::handler::RuledHandler;
 
 mod builtin;
 mod client;
 mod config;
 mod filter;
-pub mod protocol;
-pub mod server;
+mod handler;
+mod protocol;
+mod server;
 
 pub type Result<T> = anyhow::Result<T>;
+
+#[derive(Parser)]
+#[command(name = "ZeroDNS")]
+#[command(author = "Jeffsky <jjeffcaii@outlook.com>")]
+#[command(version = "0.1.0")]
+#[command(about = "A modern, simple and fast DNS server.", long_about = None)]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// Run a ZeroDNS server from a configuration TOML file
+    Run {
+        #[arg(short, long, value_name = "FILE")]
+        config: PathBuf,
+    },
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -41,18 +66,32 @@ async fn main() -> Result<()> {
 
     builtin::init();
 
-    let socket = UdpSocket::bind("127.0.0.1:5757").await?;
+    match Cli::parse().command {
+        Commands::Run { config: path } => {
+            let c = config::read_from_toml(path)?;
 
-    let h = FilteredHandler::builder()
-        .append_with("proxyby", &())
-        .build()
-        .unwrap();
-    let server = Server::new(socket, h);
+            let socket = UdpSocket::bind(&c.server.listen).await?;
 
-    server.run().await?;
+            let mut rb = RuledHandler::builder();
+
+            for (k, v) in c.filters.iter() {
+                rb = rb.filter(k, v)?;
+            }
+
+            for next in c.rules.iter() {
+                rb = rb.rule(next)?;
+            }
+
+            let h = rb.build();
+
+            let server = Server::new(socket, h);
+
+            server.run().await?;
+        }
+    }
 
     // RUN:
-    // dig +short @127.0.0.1 -p5757 baidu.com
+    // dig +short @127.0.0.1 -p5354 baidu.com
 
     drop(scope_guard);
 
