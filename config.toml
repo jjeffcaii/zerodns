@@ -1,5 +1,5 @@
 [server]
-listen = "0.0.0.0:5354"
+listen = "0.0.0.0:5454"
 
 [filters.china]
 kind = "proxyby"
@@ -9,10 +9,18 @@ props = { servers = ["223.5.5.5", "223.6.6.6"] }
 kind = "proxyby"
 props = { servers = ["8.8.8.8", "8.8.4.4"] }
 
+[filters.chinadns]
+kind = "chinadns"
+props = { trusted = ["8.8.8.8", "8.8.4.4"], mistrusted = ["223.5.5.5", "223.6.6.6"], geoip_database = "GeoLite2-Country.mmdb" }
+
+[[rules]]
+domain = "*.cn"
+filter = "china"
+
 [[rules]]
 domain = "*google.com"
 filter = "google"
 
 [[rules]]
 domain = "*"
-filter = "china"
+filter = "chinadns"

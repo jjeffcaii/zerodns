@@ -124,6 +124,10 @@ mod tests {
             }
         }
 
+        fn next(&self) -> Option<&dyn Filter> {
+            self.next.as_deref()
+        }
+
         fn set_next(&mut self, next: Box<dyn Filter>) {
             self.next.replace(next);
         }

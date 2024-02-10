@@ -96,6 +96,10 @@ mod tests {
             Ok(())
         }
 
+        fn next(&self) -> Option<&dyn Filter> {
+            None
+        }
+
         fn set_next(&mut self, _: Box<dyn Filter>) {}
     }
 

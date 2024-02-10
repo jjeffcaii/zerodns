@@ -150,6 +150,7 @@ impl Flags {
 }
 
 // https://www.firewall.cx/networking/network-protocols/dns-protocol/protocols-dns-query.html
+#[derive(Debug, Clone)]
 pub struct Message(Bytes);
 
 impl Message {
@@ -161,12 +162,27 @@ impl Message {
         Flags(BigEndian::read_u16(&self.0[2..]))
     }
 
-    pub fn questions(&self) -> u16 {
-        BigEndian::read_u16(&self.0[4..])
+    pub fn questions(&self) -> impl Iterator<Item = Question<'_>> {
+        let questions_num = BigEndian::read_u16(&self.0[4..]);
+        QuestionIter {
+            raw: &self.0[12..],
+            lefts: questions_num,
+        }
     }
 
-    pub fn answers(&self) -> u16 {
-        BigEndian::read_u16(&self.0[6..])
+    pub fn answers(&self) -> impl Iterator<Item = RR<'_>> {
+        let n = BigEndian::read_u16(&self.0[6..]);
+
+        let mut offset = 12;
+        for next in self.questions() {
+            offset += next.len();
+        }
+
+        RRIter {
+            raw: &self.0[..],
+            offset,
+            lefts: n,
+        }
     }
 
     pub fn authority(&self) -> u16 {
@@ -175,10 +191,6 @@ impl Message {
 
     pub fn additional(&self) -> u16 {
         BigEndian::read_u16(&self.0[10..])
-    }
-
-    pub fn queries(&self) -> Question<'_> {
-        Question(&self.0[12..])
     }
 }
 
@@ -194,9 +206,36 @@ impl From<Message> for Bytes {
     }
 }
 
+pub struct QuestionIter<'a> {
+    raw: &'a [u8],
+    lefts: u16,
+}
+
+impl<'a> Iterator for QuestionIter<'a> {
+    type Item = Question<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.lefts < 1 {
+            return None;
+        }
+
+        self.lefts -= 1;
+
+        let question = Question(self.raw);
+
+        self.raw = &self.raw[question.len()..];
+
+        Some(question)
+    }
+}
+
 pub struct Question<'a>(&'a [u8]);
 
 impl Question<'_> {
+    pub fn len(&self) -> usize {
+        self.get_domain_len() + 4
+    }
+
     pub fn name(&self) -> impl Iterator<Item = &'_ [u8]> {
         DomainIter(self.0)
     }
@@ -220,7 +259,7 @@ impl Question<'_> {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub struct DomainIter<'a>(&'a [u8]);
+struct DomainIter<'a>(&'a [u8]);
 
 impl<'a> Iterator for DomainIter<'a> {
     type Item = &'a [u8];
@@ -246,48 +285,97 @@ impl From<Bytes> for Message {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
-pub enum RRName<'a> {
+enum RRName<'a> {
     Normal(DomainIter<'a>),
     Reference(u16),
 }
 
-pub struct RR<'a>(&'a [u8]);
+struct RRIter<'a> {
+    raw: &'a [u8],
+    offset: usize,
+    lefts: u16,
+}
+
+impl<'a> Iterator for RRIter<'a> {
+    type Item = RR<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.lefts < 1 {
+            return None;
+        }
+        self.lefts -= 1;
+
+        let next = RR {
+            raw: self.raw,
+            offset: self.offset,
+        };
+
+        let size = next.len();
+        self.offset += size;
+
+        Some(next)
+    }
+}
+
+pub struct RR<'a> {
+    raw: &'a [u8],
+    offset: usize,
+}
 
 impl RR<'_> {
-    pub fn name(&self) -> RRName<'_> {
-        if self.0[0] & 0xc0 == 0xc0 {
-            RRName::Reference(BigEndian::read_u16(self.0) & 0x3f)
-        } else {
-            RRName::Normal(DomainIter(self.0))
+    pub fn name(&self) -> impl Iterator<Item = &[u8]> {
+        match self.rrname() {
+            RRName::Normal(d) => d,
+            RRName::Reference(offset) => DomainIter(&self.raw[offset as usize..]),
         }
     }
 
     pub fn typ(&self) -> Type {
+        let b = &self.raw[self.offset..];
         let offset = self.get_name_len();
-        Type::parse_u16(BigEndian::read_u16(&self.0[offset..])).unwrap()
+        Type::parse_u16(BigEndian::read_u16(&b[offset..])).unwrap()
     }
 
     pub fn class(&self) -> QClass {
+        let b = &self.raw[self.offset..];
         let offset = self.get_name_len();
-        let n = BigEndian::read_u16(&self.0[offset + 2..]);
+        let n = BigEndian::read_u16(&b[offset + 2..]);
         QClass::parse_u16(n).unwrap()
     }
 
     pub fn time_to_live(&self) -> u32 {
+        let b = &self.raw[self.offset..];
         let offset = self.get_name_len();
-        BigEndian::read_u32(&self.0[offset + 4..])
+        BigEndian::read_u32(&b[offset + 4..])
     }
 
     pub fn data(&self) -> &[u8] {
+        let b = &self.raw[self.offset..];
         let offset = self.get_name_len();
-        let size = BigEndian::read_u16(&self.0[offset + 8..]) as usize;
-        &self.0[offset + 10..offset + 10 + size]
+        let size = BigEndian::read_u16(&b[offset + 8..]) as usize;
+        &b[offset + 10..offset + 10 + size]
+    }
+
+    pub fn len(&self) -> usize {
+        let b = &self.raw[self.offset..];
+        let offset = self.get_name_len();
+        let size = BigEndian::read_u16(&b[offset + 8..]) as usize;
+        offset + 10 + size
+    }
+
+    #[inline(always)]
+    fn rrname(&self) -> RRName<'_> {
+        let b = &self.raw[self.offset..];
+        if b[0] & 0xc0 == 0xc0 {
+            RRName::Reference(BigEndian::read_u16(b) & 0x3f)
+        } else {
+            RRName::Normal(DomainIter(b))
+        }
     }
 
     #[inline(always)]
     fn get_name_len(&self) -> usize {
-        match self.name() {
+        match self.rrname() {
             RRName::Normal(it) => {
                 let mut offset = 1usize;
                 for next in it {
@@ -300,14 +388,10 @@ impl RR<'_> {
     }
 }
 
-impl<'a> From<&'a [u8]> for RR<'a> {
-    fn from(value: &'a [u8]) -> Self {
-        Self(value)
-    }
-}
-
 #[cfg(test)]
 mod tests {
+    use std::net::Ipv4Addr;
+
     use super::*;
 
     fn init() {
@@ -329,25 +413,60 @@ mod tests {
         assert!(!dq.flags().is_response());
         assert_eq!(OpCode::Standard, dq.flags().opcode());
 
-        let queries = dq.queries();
-        for (i, next) in queries.name().enumerate() {
-            info!("#{}: {}", i, String::from_utf8_lossy(next));
+        for question in dq.questions() {
+            for (i, next) in question.name().enumerate() {
+                info!("#{}: {}", i, String::from_utf8_lossy(next));
+            }
+            assert_eq!(1u16, question.typ() as u16);
+            assert_eq!(QClass::IN, question.class());
         }
-
-        assert_eq!(1u16, queries.typ() as u16);
-        assert_eq!(QClass::IN, queries.class());
     }
 
     #[test]
-    fn test_rr() {
+    fn test_decode_response() {
         init();
-        let raw = hex::decode("c00c000100010000019e0004279c420a").unwrap();
-        let rr = RR::from(&raw[..]);
-        let name = rr.name();
-        assert_eq!(RRName::Reference(0x000c), name);
-        assert_eq!(Type::A, rr.typ());
-        assert_eq!(QClass::IN, rr.class());
-        assert_eq!(414, rr.time_to_live());
-        assert_eq!(&[39, 156, 66, 10], rr.data());
+
+        let message = {
+            let raw = hex::decode("16068180000100020000000105626169647503636f6d0000010001c00c000100010000012200046ef24442c00c00010001000001220004279c420a0000290580000000000000").unwrap();
+            Message::from(Bytes::from(raw))
+        };
+
+        for (i, answer) in message.answers().enumerate() {
+            let mut v = vec![];
+            for (j, next) in answer.name().enumerate() {
+                if j > 0 {
+                    v.push(b'.');
+                }
+                v.extend_from_slice(next);
+            }
+
+            let mut v4 = [0u8; 4];
+            (0..4).for_each(|i| v4[i] = answer.data()[i]);
+
+            let typ = answer.typ();
+            let class = answer.class();
+
+            info!(
+                "answer#{}: domain={}, type={:?}, class={:?}, address={}",
+                i,
+                String::from_utf8_lossy(&v[..]),
+                answer.typ(),
+                answer.class(),
+                Ipv4Addr::from(v4),
+            );
+        }
     }
+
+    // #[test]
+    // fn test_rr() {
+    //     init();
+    //     let raw = hex::decode("c00c000100010000019e0004279c420a").unwrap();
+    //     let rr = RR::from(&raw[..]);
+    //     let name = rr.name();
+    //     assert_eq!(RRName::Reference(0x000c), name);
+    //     assert_eq!(Type::A, rr.typ());
+    //     assert_eq!(QClass::IN, rr.class());
+    //     assert_eq!(414, rr.time_to_live());
+    //     assert_eq!(&[39, 156, 66, 10], rr.data());
+    // }
 }

@@ -5,6 +5,7 @@ pub(crate) use registry::load;
 pub use registry::{register, FilterFactory, Options};
 
 mod chinadns;
+mod misc;
 mod proto;
 mod proxyby;
 mod registry;

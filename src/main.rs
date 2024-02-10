@@ -18,7 +18,6 @@ extern crate log;
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
-use slog::Drain;
 use tokio::net::UdpSocket;
 
 use server::Server;
@@ -56,13 +55,7 @@ enum Commands {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let decorator = slog_term::TermDecorator::new().build();
-    let drain = slog_term::FullFormat::new(decorator).build().fuse();
-    let drain = slog_async::Async::new(drain).build().fuse();
-    let logger = slog::Logger::root(drain, slog::slog_o!("version" => env!("CARGO_PKG_VERSION")));
-
-    let scope_guard = slog_scope::set_global_logger(logger);
-    slog_stdlog::init().unwrap();
+    pretty_env_logger::try_init_timed().ok();
 
     builtin::init();
 
@@ -91,9 +84,7 @@ async fn main() -> Result<()> {
     }
 
     // RUN:
-    // dig +short @127.0.0.1 -p5354 baidu.com
-
-    drop(scope_guard);
+    // dig +short @127.0.0.1 -p5454 google.com
 
     Ok(())
 }

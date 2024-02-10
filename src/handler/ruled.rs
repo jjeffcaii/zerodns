@@ -1,13 +1,15 @@
-use async_trait::async_trait;
-use config::{Filter as FilterConf, Rule as RuleConf};
-use glob::Pattern;
-use smallvec::SmallVec;
 use std::collections::HashMap;
 
+use async_trait::async_trait;
+use glob::Pattern;
+use smallvec::SmallVec;
+
+use config::{Filter as FilterConf, Rule as RuleConf};
+
 use crate::protocol::Message;
+use crate::{config, Result};
 
 use super::{FilteredHandler, Handler};
-use crate::{config, Result};
 
 struct Rule {
     pattern: Option<Pattern>,
@@ -71,7 +73,7 @@ impl RuledHandler {
 
     fn get_rule(&self, req: &Message) -> Option<&Rule> {
         let mut v = SmallVec::<[u8; 64]>::new();
-        for (i, next) in req.queries().name().enumerate() {
+        for (i, next) in req.questions().next().unwrap().name().enumerate() {
             if i != 0 {
                 v.push(b'.');
             }

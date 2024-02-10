@@ -4,3 +4,5 @@ Cargo.lock
 /.idea
 /bin
 /.run
+
+/*.mmdb
