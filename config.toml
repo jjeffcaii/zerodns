@@ -1,5 +1,6 @@
 [server]
 listen = "0.0.0.0:5454"
+cache_size = 1000
 
 [filters.china]
 kind = "proxyby"

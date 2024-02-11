@@ -1,5 +1,5 @@
 use byteorder::{BigEndian, ByteOrder};
-use bytes::Bytes;
+use bytes::BytesMut;
 
 // http://www.tcpipguide.com/free/t_DNSMessagingandMessageResourceRecordandMasterFileF.htm
 
@@ -150,12 +150,16 @@ impl Flags {
 }
 
 // https://www.firewall.cx/networking/network-protocols/dns-protocol/protocols-dns-query.html
-#[derive(Debug, Clone)]
-pub struct Message(Bytes);
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+pub struct Message(pub(crate) BytesMut);
 
 impl Message {
     pub fn id(&self) -> u16 {
         BigEndian::read_u16(&self.0[..])
+    }
+
+    pub fn set_id(&mut self, id: u16) {
+        BigEndian::write_u16(&mut self.0[..], id);
     }
 
     pub fn flags(&self) -> Flags {
@@ -200,9 +204,9 @@ impl AsRef<[u8]> for Message {
     }
 }
 
-impl From<Message> for Bytes {
-    fn from(value: Message) -> Self {
-        value.0
+impl From<BytesMut> for Message {
+    fn from(value: BytesMut) -> Self {
+        Self(value)
     }
 }
 
@@ -276,12 +280,6 @@ impl<'a> Iterator for DomainIter<'a> {
         self.0 = &self.0[1 + size..];
 
         Some(domain)
-    }
-}
-
-impl From<Bytes> for Message {
-    fn from(value: Bytes) -> Self {
-        Self(value)
     }
 }
 

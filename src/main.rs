@@ -15,9 +15,9 @@ extern crate anyhow;
 #[macro_use]
 extern crate log;
 
-use bytes::BytesMut;
 use std::path::PathBuf;
 
+use bytes::BytesMut;
 use clap::{Parser, Subcommand};
 use tokio::net::UdpSocket;
 
@@ -26,6 +26,7 @@ use server::Server;
 use crate::handler::RuledHandler;
 
 mod builtin;
+mod cache;
 mod client;
 mod config;
 mod filter;
@@ -78,7 +79,24 @@ async fn main() -> Result<()> {
 
             let h = rb.build();
 
-            let server = Server::new(socket, h, BytesMut::with_capacity(4096));
+            let cs = match &c.server.cache_size {
+                None => None,
+                Some(size) => {
+                    if *size == 0 {
+                        None
+                    } else {
+                        Some(cache::CacheStore::builder().capacity(*size).build())
+                    }
+                }
+            };
+
+            let mut buffsize = c.server.buff_size.unwrap_or(4096);
+
+            if buffsize < 1024 {
+                buffsize = 1024;
+            }
+
+            let server = Server::new(socket, h, BytesMut::with_capacity(buffsize), cs);
 
             server.listen().await?;
         }

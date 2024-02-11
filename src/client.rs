@@ -22,7 +22,7 @@ impl Client {
 
         BigEndian::write_u16(&mut self.buf[..], req.id());
 
-        let b = self.buf.split_to(n).freeze();
+        let b = self.buf.split_to(n);
 
         Ok(Message::from(b))
     }

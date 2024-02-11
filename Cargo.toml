@@ -26,6 +26,7 @@ serde = { version = "1.0.196", features = ["derive"] }
 toml = "0.8.10"
 glob = "0.3.1"
 maxminddb = "0.24.0"
+moka = { version = "0.12", features = ["future", "sync"] }
 
 [dev-dependencies]
 hex = "0.4.3"

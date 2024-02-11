@@ -14,6 +14,8 @@ pub struct Config {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServerConfig {
     pub listen: String,
+    pub buff_size: Option<usize>,
+    pub cache_size: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
