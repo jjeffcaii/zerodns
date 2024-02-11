@@ -1,7 +1,11 @@
 [package]
 name = "zerodns"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 edition = "2021"
+include = [
+    "**/*.rs",
+    "Cargo.toml",
+]
 
 [profile.release]
 lto = "thin"
