@@ -15,6 +15,7 @@ extern crate anyhow;
 #[macro_use]
 extern crate log;
 
+use bytes::BytesMut;
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
@@ -77,9 +78,9 @@ async fn main() -> Result<()> {
 
             let h = rb.build();
 
-            let server = Server::new(socket, h);
+            let server = Server::new(socket, h, BytesMut::with_capacity(4096));
 
-            server.run().await?;
+            server.listen().await?;
         }
     }
 
