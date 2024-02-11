@@ -1,5 +1,5 @@
 use byteorder::{BigEndian, ByteOrder};
-use bytes::BytesMut;
+use bytes::{Bytes, BytesMut};
 
 // http://www.tcpipguide.com/free/t_DNSMessagingandMessageResourceRecordandMasterFileF.htm
 
@@ -207,6 +207,12 @@ impl AsRef<[u8]> for Message {
 impl From<BytesMut> for Message {
     fn from(value: BytesMut) -> Self {
         Self(value)
+    }
+}
+
+impl From<Bytes> for Message {
+    fn from(value: Bytes) -> Self {
+        Self(BytesMut::from(&value[..]))
     }
 }
 
