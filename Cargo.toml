@@ -2,6 +2,11 @@
 name = "zerodns"
 version = "0.1.0-alpha.1"
 edition = "2021"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/jjeffcaii/zerodns"
+homepage = "https://github.com/jjeffcaii/zerodns"
+description = "A DNS server in Rust, which is inspired from chinadns/dnsmasq."
 include = [
     "**/*.rs",
     "Cargo.toml",
