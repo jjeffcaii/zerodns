@@ -1,19 +1,17 @@
-use std::net::SocketAddr;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use smallvec::SmallVec;
 
-use crate::client::Client;
 use crate::filter::misc::OptionsReader;
-use crate::protocol::Message;
+use crate::protocol::{Message, DNS};
 use crate::Result;
 
 use super::{Context, Filter, FilterFactory, Options};
 
 #[derive(Default)]
 pub(crate) struct ProxyByFilter {
-    upstreams: Arc<Vec<SocketAddr>>,
+    upstreams: Arc<Vec<DNS>>,
     next: Option<Box<dyn Filter>>,
 }
 
@@ -21,8 +19,7 @@ pub(crate) struct ProxyByFilter {
 impl Filter for ProxyByFilter {
     async fn on_request(&self, _: &mut Context, req: &mut Message) -> Result<Option<Message>> {
         for addr in self.upstreams.iter() {
-            let mut c = Client::from(Clone::clone(addr));
-            if let Ok(res) = c.request(req).await {
+            if let Ok(res) = addr.request(req).await {
                 if log_enabled!(log::Level::Debug) {
                     let mut v = SmallVec::<[u8; 64]>::new();
                     for (i, next) in req.questions().next().unwrap().name().enumerate() {
@@ -51,7 +48,7 @@ impl Filter for ProxyByFilter {
 }
 
 pub(crate) struct ProxyByFilterFactory {
-    servers: Arc<Vec<SocketAddr>>,
+    servers: Arc<Vec<DNS>>,
 }
 
 impl TryFrom<&Options> for ProxyByFilterFactory {
@@ -60,9 +57,14 @@ impl TryFrom<&Options> for ProxyByFilterFactory {
     fn try_from(opts: &Options) -> std::result::Result<Self, Self::Error> {
         const KEY_SERVERS: &str = "servers";
 
-        let servers = OptionsReader::from(opts)
+        let addrs = OptionsReader::from(opts)
             .get_addrs(KEY_SERVERS)?
             .ok_or(anyhow!("invalid format of property '{}'", KEY_SERVERS))?;
+
+        let mut servers = vec![];
+        for next in addrs {
+            servers.push(DNS::UDP(next));
+        }
 
         Ok(Self {
             servers: Arc::new(servers),

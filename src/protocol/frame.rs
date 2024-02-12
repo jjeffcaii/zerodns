@@ -154,6 +154,10 @@ impl Flags {
 pub struct Message(pub(crate) BytesMut);
 
 impl Message {
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
     pub fn id(&self) -> u16 {
         BigEndian::read_u16(&self.0[..])
     }
@@ -216,6 +220,12 @@ impl From<Bytes> for Message {
     }
 }
 
+impl From<Vec<u8>> for Message {
+    fn from(value: Vec<u8>) -> Self {
+        Self(BytesMut::from(&value[..]))
+    }
+}
+
 pub struct QuestionIter<'a> {
     raw: &'a [u8],
     lefts: u16,
@@ -248,6 +258,17 @@ impl Question<'_> {
 
     pub fn name(&self) -> impl Iterator<Item = &'_ [u8]> {
         DomainIter(self.0)
+    }
+
+    pub fn name_string(&self) -> String {
+        let mut v = vec![];
+        for (i, name) in self.name().enumerate() {
+            if i != 0 {
+                v.push(b'.');
+            }
+            v.extend_from_slice(name);
+        }
+        unsafe { String::from_utf8_unchecked(v) }
     }
 
     pub fn typ(&self) -> Type {
@@ -332,6 +353,17 @@ impl RR<'_> {
             RRName::Normal(d) => d,
             RRName::Reference(offset) => DomainIter(&self.raw[offset as usize..]),
         }
+    }
+
+    pub fn name_string(&self) -> String {
+        let mut v = vec![];
+        for (i, name) in self.name().enumerate() {
+            if i != 0 {
+                v.push(b'.');
+            }
+            v.extend_from_slice(name);
+        }
+        unsafe { String::from_utf8_unchecked(v) }
     }
 
     pub fn typ(&self) -> Type {

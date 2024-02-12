@@ -1,20 +1,19 @@
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use maxminddb::Reader;
 use smallvec::SmallVec;
 
-use crate::client::Client;
 use crate::filter::misc::OptionsReader;
-use crate::protocol::{Message, Type};
+use crate::protocol::{Message, Type, DNS};
 use crate::Result;
 
 use super::{Context, Filter, FilterFactory, Options};
 
 pub(crate) struct ChinaDNSFilter {
-    trusted: Arc<Vec<SocketAddr>>,
-    mistrusted: Arc<Vec<SocketAddr>>,
+    trusted: Arc<Vec<DNS>>,
+    mistrusted: Arc<Vec<DNS>>,
     next: Option<Box<dyn Filter>>,
     geoip: Arc<Reader<Vec<u8>>>,
 }
@@ -22,13 +21,12 @@ pub(crate) struct ChinaDNSFilter {
 impl ChinaDNSFilter {
     async fn request(
         req: &Message,
-        servers: &[SocketAddr],
+        servers: &[DNS],
         geoip: &Reader<Vec<u8>>,
         all_china: bool,
     ) -> Option<Message> {
-        for next in servers.iter() {
-            let mut c = Client::from(Clone::clone(next));
-            if let Ok(r) = c.request(req).await {
+        for server in servers.iter() {
+            if let Ok(r) = server.request(req).await {
                 if all_china {
                     for next in r.answers().filter(|it| it.typ() == Type::A) {
                         let data = next.data();
@@ -127,8 +125,8 @@ impl Filter for ChinaDNSFilter {
 }
 
 pub(crate) struct ChinaDNSFilterFactory {
-    trusted: Arc<Vec<SocketAddr>>,
-    mistrusted: Arc<Vec<SocketAddr>>,
+    trusted: Arc<Vec<DNS>>,
+    mistrusted: Arc<Vec<DNS>>,
     geoip: Arc<Reader<Vec<u8>>>,
 }
 
@@ -142,12 +140,26 @@ impl TryFrom<&Options> for ChinaDNSFilterFactory {
 
         let r = OptionsReader::from(opts);
 
-        let trusted = r
-            .get_addrs(KEY_TRUSTED)?
-            .ok_or(anyhow!("invalid property '{}'", KEY_TRUSTED))?;
-        let mistrusted = r
-            .get_addrs(KEY_MISTRUSTED)?
-            .ok_or(anyhow!("invalid property '{}'", KEY_MISTRUSTED))?;
+        let trusted = {
+            let addrs = r
+                .get_addrs(KEY_TRUSTED)?
+                .ok_or(anyhow!("invalid property '{}'", KEY_TRUSTED))?;
+            let mut v = vec![];
+            for addr in addrs {
+                v.push(DNS::UDP(addr));
+            }
+            v
+        };
+        let mistrusted = {
+            let addrs = r
+                .get_addrs(KEY_MISTRUSTED)?
+                .ok_or(anyhow!("invalid property '{}'", KEY_MISTRUSTED))?;
+            let mut v = vec![];
+            for addr in addrs {
+                v.push(DNS::UDP(addr));
+            }
+            v
+        };
 
         let path = opts
             .get(KEY_GEOIP_DATABASE)

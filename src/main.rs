@@ -27,7 +27,6 @@ use crate::handler::RuledHandler;
 
 mod builtin;
 mod cache;
-mod client;
 mod config;
 mod filter;
 mod handler;
