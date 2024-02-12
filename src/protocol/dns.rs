@@ -98,7 +98,7 @@ mod tests {
         let res = addr.request(&req).await;
 
         assert!(res.is_ok_and(|it| {
-            for answer in it.answers() {
+            for (i, answer) in it.answers().enumerate() {
                 let data = answer.data();
                 let ip = Ipv4Addr::new(data[0], data[1], data[2], data[3]);
                 info!(

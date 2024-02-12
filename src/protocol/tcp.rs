@@ -5,7 +5,7 @@ use tokio_util::codec::{Decoder, Encoder};
 use super::frame::Message;
 
 #[derive(Default, Debug, Copy, Clone)]
-pub struct Codec;
+pub(crate) struct Codec;
 
 impl Encoder<&Message> for Codec {
     type Error = anyhow::Error;
