@@ -57,14 +57,9 @@ impl TryFrom<&Options> for ProxyByFilterFactory {
     fn try_from(opts: &Options) -> std::result::Result<Self, Self::Error> {
         const KEY_SERVERS: &str = "servers";
 
-        let addrs = OptionsReader::from(opts)
+        let servers = OptionsReader::from(opts)
             .get_addrs(KEY_SERVERS)?
             .ok_or(anyhow!("invalid format of property '{}'", KEY_SERVERS))?;
-
-        let mut servers = vec![];
-        for next in addrs {
-            servers.push(DNS::UDP(next));
-        }
 
         Ok(Self {
             servers: Arc::new(servers),

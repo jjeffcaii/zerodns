@@ -1,13 +1,15 @@
 #!/usr/bin/env just --justfile
 
+alias r := run
+
 release:
-  cargo build --release
+  @cargo build --release
 
 lint:
-  cargo clippy
+  @cargo clippy
 
-run:
-  cargo run -- run -c config.toml
+run: geoip
+  @cargo run -- run -c config.toml
 
-geoio:
-  wget https://git.io/GeoLite2-Country.mmdb
+geoip:
+  @if [[ ! -f GeoLite2-Country.mmdb ]]; then echo 'download GeoLite2-Country.mmdb...' && wget --quiet https://git.io/GeoLite2-Country.mmdb; fi

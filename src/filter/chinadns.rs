@@ -1,4 +1,4 @@
-use std::net::{IpAddr, Ipv4Addr};
+use std::net::IpAddr;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -28,14 +28,12 @@ impl ChinaDNSFilter {
         for server in servers.iter() {
             if let Ok(r) = server.request(req).await {
                 if all_china {
+                    // reject answers of china ips
                     for next in r.answers().filter(|it| it.typ() == Type::A) {
-                        let data = next.data();
-                        let mut v4 = [0u8; 4];
-                        (0..4).for_each(|i| v4[i] = data[i]);
-                        let addr = IpAddr::V4(Ipv4Addr::from(v4));
-
-                        if !Self::is_china(geoip, &addr) {
-                            return None;
+                        if let Some(addr) = next.data_as_ipaddr() {
+                            if !Self::is_china(geoip, &addr) {
+                                return None;
+                            }
                         }
                     }
                 }
@@ -46,6 +44,7 @@ impl ChinaDNSFilter {
         None
     }
 
+    #[inline(always)]
     fn is_china(geoip: &Reader<Vec<u8>>, addr: &IpAddr) -> bool {
         let mut is_china = false;
         if let Ok(country) = geoip.lookup::<maxminddb::geoip2::Country>(Clone::clone(addr)) {
@@ -97,7 +96,7 @@ impl Filter for ChinaDNSFilter {
 
         match rx.recv().await {
             Some((china, msg)) => {
-                info!(
+                debug!(
                     "{}: oversea={}",
                     String::from_utf8_lossy(&domain[..]),
                     !china
@@ -141,24 +140,12 @@ impl TryFrom<&Options> for ChinaDNSFilterFactory {
         let r = OptionsReader::from(opts);
 
         let trusted = {
-            let addrs = r
-                .get_addrs(KEY_TRUSTED)?
-                .ok_or(anyhow!("invalid property '{}'", KEY_TRUSTED))?;
-            let mut v = vec![];
-            for addr in addrs {
-                v.push(DNS::UDP(addr));
-            }
-            v
+            r.get_addrs(KEY_TRUSTED)?
+                .ok_or(anyhow!("invalid property '{}'", KEY_TRUSTED))?
         };
         let mistrusted = {
-            let addrs = r
-                .get_addrs(KEY_MISTRUSTED)?
-                .ok_or(anyhow!("invalid property '{}'", KEY_MISTRUSTED))?;
-            let mut v = vec![];
-            for addr in addrs {
-                v.push(DNS::UDP(addr));
-            }
-            v
+            r.get_addrs(KEY_MISTRUSTED)?
+                .ok_or(anyhow!("invalid property '{}'", KEY_MISTRUSTED))?
         };
 
         let path = opts
@@ -216,10 +203,7 @@ mod tests {
 
         let show = |msg: &Message| {
             for next in msg.answers() {
-                let data = next.data();
-                let mut v4 = [0u8; 4];
-                (0..4).for_each(|i| v4[i] = data[i]);
-                let addr = Ipv4Addr::from(v4);
+                let addr = next.data_as_ipaddr();
 
                 let mut v = SmallVec::<[u8; 64]>::new();
                 for (i, b) in next.name().enumerate() {

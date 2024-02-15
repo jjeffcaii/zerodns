@@ -1,3 +1,6 @@
+use std::fmt::Display;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+
 use byteorder::{BigEndian, ByteOrder};
 use bytes::{Bytes, BytesMut};
 
@@ -173,7 +176,8 @@ impl Message {
     pub fn questions(&self) -> impl Iterator<Item = Question<'_>> {
         let questions_num = BigEndian::read_u16(&self.0[4..]);
         QuestionIter {
-            raw: &self.0[12..],
+            raw: &self.0,
+            offset: 12,
             lefts: questions_num,
         }
     }
@@ -228,6 +232,7 @@ impl From<Vec<u8>> for Message {
 
 pub struct QuestionIter<'a> {
     raw: &'a [u8],
+    offset: usize,
     lefts: u16,
 }
 
@@ -241,78 +246,44 @@ impl<'a> Iterator for QuestionIter<'a> {
 
         self.lefts -= 1;
 
-        let question = Question(self.raw);
+        let question = Question {
+            raw: self.raw,
+            offset: self.offset,
+        };
 
-        self.raw = &self.raw[question.len()..];
+        self.offset += question.len();
 
         Some(question)
     }
 }
 
-pub struct Question<'a>(&'a [u8]);
+pub struct Question<'a> {
+    raw: &'a [u8],
+    offset: usize,
+}
 
 impl Question<'_> {
     pub fn len(&self) -> usize {
-        self.get_domain_len() + 4
+        self.name().len() + 4
     }
 
-    pub fn name(&self) -> impl Iterator<Item = &'_ [u8]> {
-        DomainIter(self.0)
-    }
-
-    pub fn name_string(&self) -> String {
-        let mut v = vec![];
-        for (i, name) in self.name().enumerate() {
-            if i != 0 {
-                v.push(b'.');
-            }
-            v.extend_from_slice(name);
+    #[inline]
+    pub fn name(&self) -> Notation<'_> {
+        Notation {
+            raw: self.raw,
+            pos: self.offset,
         }
-        unsafe { String::from_utf8_unchecked(v) }
     }
 
     pub fn typ(&self) -> Type {
-        Type::parse_u16(BigEndian::read_u16(&self.0[self.get_domain_len()..])).unwrap()
+        let n = self.offset + self.name().len();
+        Type::parse_u16(BigEndian::read_u16(&self.raw[n..])).unwrap()
     }
 
     pub fn class(&self) -> QClass {
-        QClass::parse_u16(BigEndian::read_u16(&self.0[self.get_domain_len() + 2..])).unwrap()
+        let n = self.offset + self.name().len() + 2;
+        QClass::parse_u16(BigEndian::read_u16(&self.raw[n..])).unwrap()
     }
-
-    #[inline(always)]
-    fn get_domain_len(&self) -> usize {
-        let mut offset = 1usize;
-        for next in self.name() {
-            offset += next.len() + 1;
-        }
-        offset
-    }
-}
-
-#[derive(Debug, PartialEq, Eq)]
-struct DomainIter<'a>(&'a [u8]);
-
-impl<'a> Iterator for DomainIter<'a> {
-    type Item = &'a [u8];
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let size = self.0[0] as usize;
-
-        if size == 0 {
-            return None;
-        }
-
-        let domain = &self.0[1..1 + size];
-
-        self.0 = &self.0[1 + size..];
-
-        Some(domain)
-    }
-}
-
-enum RRName<'a> {
-    Normal(DomainIter<'a>),
-    Reference(u16),
 }
 
 struct RRIter<'a> {
@@ -348,78 +319,142 @@ pub struct RR<'a> {
 }
 
 impl RR<'_> {
-    pub fn name(&self) -> impl Iterator<Item = &[u8]> {
-        match self.rrname() {
-            RRName::Normal(d) => d,
-            RRName::Reference(offset) => DomainIter(&self.raw[offset as usize..]),
+    pub fn name(&self) -> Notation<'_> {
+        Notation {
+            raw: self.raw,
+            pos: self.offset,
         }
-    }
-
-    pub fn name_string(&self) -> String {
-        let mut v = vec![];
-        for (i, name) in self.name().enumerate() {
-            if i != 0 {
-                v.push(b'.');
-            }
-            v.extend_from_slice(name);
-        }
-        unsafe { String::from_utf8_unchecked(v) }
     }
 
     pub fn typ(&self) -> Type {
-        let b = &self.raw[self.offset..];
-        let offset = self.get_name_len();
-        Type::parse_u16(BigEndian::read_u16(&b[offset..])).unwrap()
+        let offset = self.offset + self.name().len();
+        Type::parse_u16(BigEndian::read_u16(&self.raw[offset..])).unwrap()
     }
 
     pub fn class(&self) -> QClass {
-        let b = &self.raw[self.offset..];
-        let offset = self.get_name_len();
-        let n = BigEndian::read_u16(&b[offset + 2..]);
+        let offset = self.offset + self.name().len() + 2;
+        let n = BigEndian::read_u16(&self.raw[offset..]);
         QClass::parse_u16(n).unwrap()
     }
 
     pub fn time_to_live(&self) -> u32 {
-        let b = &self.raw[self.offset..];
-        let offset = self.get_name_len();
-        BigEndian::read_u32(&b[offset + 4..])
+        let offset = self.offset + self.name().len() + 4;
+        BigEndian::read_u32(&self.raw[offset..])
     }
 
     pub fn data(&self) -> &[u8] {
-        let b = &self.raw[self.offset..];
-        let offset = self.get_name_len();
-        let size = BigEndian::read_u16(&b[offset + 8..]) as usize;
-        &b[offset + 10..offset + 10 + size]
+        let offset = self.offset + self.name().len() + 8;
+        let size = BigEndian::read_u16(&self.raw[offset..]) as usize;
+        &self.raw[offset + 2..offset + 2 + size]
     }
 
-    pub fn len(&self) -> usize {
-        let b = &self.raw[self.offset..];
-        let offset = self.get_name_len();
-        let size = BigEndian::read_u16(&b[offset + 8..]) as usize;
-        offset + 10 + size
+    pub fn data_as_cname(&self) -> Notation<'_> {
+        let pos = self.offset + self.name().len() + 10;
+        Notation { raw: self.raw, pos }
     }
 
-    #[inline(always)]
-    fn rrname(&self) -> RRName<'_> {
-        let b = &self.raw[self.offset..];
-        if b[0] & 0xc0 == 0xc0 {
-            RRName::Reference(BigEndian::read_u16(b) & 0x3f)
-        } else {
-            RRName::Normal(DomainIter(b))
+    pub fn data_as_ipaddr(&self) -> Option<IpAddr> {
+        let data = self.data();
+        match data.len() {
+            4 => {
+                let v4 = Ipv4Addr::new(data[0], data[1], data[2], data[3]);
+                Some(IpAddr::V4(v4))
+            }
+            16 => {
+                let v6 = Ipv6Addr::new(
+                    BigEndian::read_u16(data),
+                    BigEndian::read_u16(&data[2..]),
+                    BigEndian::read_u16(&data[4..]),
+                    BigEndian::read_u16(&data[6..]),
+                    BigEndian::read_u16(&data[8..]),
+                    BigEndian::read_u16(&data[10..]),
+                    BigEndian::read_u16(&data[12..]),
+                    BigEndian::read_u16(&data[14..]),
+                );
+                Some(IpAddr::V6(v6))
+            }
+            _ => None,
         }
     }
 
-    #[inline(always)]
-    fn get_name_len(&self) -> usize {
-        match self.rrname() {
-            RRName::Normal(it) => {
-                let mut offset = 1usize;
-                for next in it {
-                    offset += next.len() + 1;
-                }
-                offset
+    pub fn len(&self) -> usize {
+        let n = self.name().len();
+        let size = BigEndian::read_u16(&self.raw[self.offset + n + 8..]) as usize;
+        n + 10 + size
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Notation<'a> {
+    raw: &'a [u8],
+    pos: usize,
+}
+
+impl Notation<'_> {
+    pub fn len(&self) -> usize {
+        let mut offset = self.pos;
+        let mut n = 0usize;
+
+        loop {
+            let first = self.raw[offset];
+            if first & 0xc0 == 0xc0 {
+                n += 2;
+                break;
             }
-            RRName::Reference(_) => 2,
+            let size = first as usize;
+            n += 1 + size;
+            if size == 0 {
+                break;
+            }
+            offset += 1 + size;
+        }
+
+        n
+    }
+}
+
+impl Display for Notation<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut notation = Clone::clone(self);
+        match notation.next() {
+            None => Ok(()),
+            Some(first) => {
+                write!(f, "{}", unsafe { std::str::from_utf8_unchecked(first) })?;
+                for next in notation {
+                    write!(f, ".{}", unsafe { std::str::from_utf8_unchecked(next) })?;
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
+impl<'a> Iterator for Notation<'a> {
+    type Item = &'a [u8];
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.pos == usize::MAX {
+            return None;
+        }
+        let first = self.raw[self.pos];
+
+        if first & 0xc0 == 0xc0 {
+            // 1. compression pointer
+            let pos = BigEndian::read_u16(&self.raw[self.pos..]) & 0x3f;
+            self.pos = pos as usize;
+            self.next()
+        } else {
+            // 2. length-based
+            let size = first as usize;
+
+            if size == 0 {
+                self.pos = usize::MAX;
+                return None;
+            }
+            let offset = self.pos + 1;
+            self.pos = offset + size;
+            let b = &self.raw[offset..self.pos];
+            Some(b)
         }
     }
 }
@@ -449,12 +484,16 @@ mod tests {
         assert!(!dq.flags().is_response());
         assert_eq!(OpCode::Standard, dq.flags().opcode());
 
-        for question in dq.questions() {
-            for (i, next) in question.name().enumerate() {
-                info!("#{}: {}", i, String::from_utf8_lossy(next));
-            }
-            assert_eq!(1u16, question.typ() as u16);
-            assert_eq!(QClass::IN, question.class());
+        for (i, question) in dq.questions().enumerate() {
+            let name = question.name();
+            let typ = question.typ();
+            let class = question.class();
+            info!(
+                "question#{}: name={}, type={:?}, class={:?}",
+                i, name, typ, class
+            );
+            assert_eq!(1u16, typ as u16);
+            assert_eq!(QClass::IN, class);
         }
     }
 
@@ -493,16 +532,43 @@ mod tests {
         }
     }
 
-    // #[test]
-    // fn test_rr() {
-    //     init();
-    //     let raw = hex::decode("c00c000100010000019e0004279c420a").unwrap();
-    //     let rr = RR::from(&raw[..]);
-    //     let name = rr.name();
-    //     assert_eq!(RRName::Reference(0x000c), name);
-    //     assert_eq!(Type::A, rr.typ());
-    //     assert_eq!(QClass::IN, rr.class());
-    //     assert_eq!(414, rr.time_to_live());
-    //     assert_eq!(&[39, 156, 66, 10], rr.data());
-    // }
+    #[test]
+    fn test_youtube() {
+        init();
+        let msg = {
+            let raw = hex::decode("e7ad81800001000e000000010377777707796f757475626503636f6d0000010001c00c00050001000000ab00160a796f75747562652d7569016c06676f6f676c65c018c02d00010001000000ad00048efa442ec02d00010001000000ad00048efa48eec02d00010001000000ad00048efabceec02d00010001000000ad00048efa488ec02d00010001000000ad00048efa48aec02d00010001000000ad00048efab00ec02d00010001000000ad00048efabd0ec02d00010001000000ad00048efad98ec02d00010001000000ad00048efb282ec02d00010001000000ad00048efa440ec02d00010001000000ad0004acd90c8ec02d00010001000000ad0004acd90e4ec02d00010001000000ad00048efa446e0000290200000000000000").unwrap();
+            Message::from(raw)
+        };
+
+        for (i, answer) in msg.answers().enumerate() {
+            match answer.typ() {
+                Type::A => {
+                    info!("A: {:?}", answer.data_as_ipaddr());
+                }
+                Type::CNAME => {
+                    info!("CNAME: {}", answer.data_as_cname());
+                }
+                _ => (),
+            }
+        }
+    }
+
+    #[test]
+    fn test_big() {
+        init();
+
+        let raw = hex::decode("e7ad81800001000e000000010377777707796f757475626503636f6d0000010001c00c00050001000000ab00160a796f75747562652d7569016c06676f6f676c65c018c02d00010001000000ad00048efa442ec02d00010001000000ad00048efa48eec02d00010001000000ad00048efabceec02d00010001000000ad00048efa488ec02d00010001000000ad00048efa48aec02d00010001000000ad00048efab00ec02d00010001000000ad00048efabd0ec02d00010001000000ad00048efad98ec02d00010001000000ad00048efb282ec02d00010001000000ad00048efa440ec02d00010001000000ad0004acd90c8ec02d00010001000000ad0004acd90e4ec02d00010001000000ad00048efa446e0000290200000000000000").unwrap();
+
+        let offset = 113 - 68;
+        let notation = Notation {
+            raw: &raw[..],
+            pos: offset,
+        };
+
+        assert_eq!(22, notation.len());
+
+        let cname = format!("{}", &notation);
+        info!("CNAME: {}", &cname);
+        assert_eq!("youtube-ui.l.google.com", &cname);
+    }
 }

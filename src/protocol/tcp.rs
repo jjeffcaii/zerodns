@@ -77,13 +77,13 @@ mod tests {
 
             info!("id: 0x{:x}", msg.id());
             for (i, question) in msg.questions().enumerate() {
-                info!("question#{}: name={}", i, question.name_string());
+                info!("question#{}: name={}", i, question.name());
             }
             for (i, answer) in msg.answers().enumerate() {
                 let data = answer.data();
                 assert_eq!(4, data.len());
                 let ip = std::net::Ipv4Addr::new(data[0], data[1], data[2], data[3]);
-                info!("answer#{}: name={} addr={:?}", i, answer.name_string(), ip);
+                info!("answer#{}: name={} addr={:?}", i, answer.name(), ip);
             }
 
             true
