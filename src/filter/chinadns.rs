@@ -96,7 +96,7 @@ impl Filter for ChinaDNSFilter {
 
         match rx.recv().await {
             Some((china, msg)) => {
-                debug!(
+                info!(
                     "{}: oversea={}",
                     String::from_utf8_lossy(&domain[..]),
                     !china

@@ -19,11 +19,11 @@ use std::path::PathBuf;
 
 use bytes::BytesMut;
 use clap::{Parser, Subcommand};
-use tokio::net::UdpSocket;
-
-use server::Server;
+use tokio::join;
+use tokio::net::{TcpListener, UdpSocket};
 
 use crate::handler::RuledHandler;
+use crate::server::{TcpServer, UdpServer};
 
 mod builtin;
 mod cache;
@@ -89,15 +89,27 @@ async fn main() -> Result<()> {
                 }
             };
 
-            let mut buffsize = c.server.buff_size.unwrap_or(4096);
+            let udp_server = {
+                let mut buffsize = c.server.buff_size.unwrap_or(4096);
 
-            if buffsize < 1024 {
-                buffsize = 1024;
-            }
+                if buffsize < 1024 {
+                    buffsize = 1024;
+                }
 
-            let server = Server::new(socket, h, BytesMut::with_capacity(buffsize), cs);
+                UdpServer::new(
+                    socket,
+                    Clone::clone(&h),
+                    BytesMut::with_capacity(buffsize),
+                    Clone::clone(&cs),
+                )
+            };
 
-            server.listen().await?;
+            let tcp_server = {
+                let l = TcpListener::bind(&c.server.listen).await?;
+                TcpServer::new(l, Clone::clone(&h), Clone::clone(&cs))
+            };
+
+            let (_first, _second) = join!(udp_server.listen(), tcp_server.listen(),);
         }
     }
 

@@ -11,6 +11,7 @@ use crate::{config, Result};
 
 use super::{FilteredHandler, Handler};
 
+#[derive(Debug, Clone)]
 struct Rule {
     pattern: Option<Pattern>,
     filter: String,
@@ -58,7 +59,7 @@ impl RuledHandlerBuilder {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub(crate) struct RuledHandler {
     filters: HashMap<String, FilterConf, ahash::RandomState>,
     rules: Vec<Rule>,

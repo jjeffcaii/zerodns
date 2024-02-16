@@ -9,14 +9,14 @@ use crate::handler::Handler;
 use crate::protocol::Message;
 use crate::Result;
 
-pub struct Server<H> {
+pub struct UdpServer<H> {
     h: H,
     socket: UdpSocket,
     buf: BytesMut,
     cache: Option<CacheStore>,
 }
 
-impl<H> Server<H> {
+impl<H> UdpServer<H> {
     pub fn new(socket: UdpSocket, handler: H, buf: BytesMut, cache: Option<CacheStore>) -> Self {
         Self {
             h: handler,
@@ -27,7 +27,7 @@ impl<H> Server<H> {
     }
 }
 
-impl<H> Server<H>
+impl<H> UdpServer<H>
 where
     H: Handler,
 {
@@ -39,7 +39,7 @@ where
             cache,
         } = self;
 
-        info!("dns handler is listening on {:?}", &socket);
+        info!("udp dns server is listening on {}", socket.local_addr()?);
 
         let h = Arc::new(h);
         let socket = Arc::new(socket);
