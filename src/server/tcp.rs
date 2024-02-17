@@ -1,14 +1,15 @@
-use futures::{SinkExt, StreamExt};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+use futures::{SinkExt, StreamExt};
 use tokio::net::{TcpListener, TcpStream};
+use tokio_util::codec::{FramedRead, FramedWrite};
 
 use crate::cache::CacheStore;
 use crate::handler::Handler;
 use crate::protocol::Codec;
 use crate::Result;
-use tokio_util::codec::{FramedRead, FramedWrite};
 
 pub struct TcpServer<H> {
     h: H,
@@ -84,12 +85,95 @@ where
                 .expect("no record resolved!");
 
             if let Some(cache) = &cache {
+                let id = req.id();
+                req.set_id(0);
                 cache.set(&req, &msg).await;
+                req.set_id(id);
                 debug!("set dns cache ok");
             }
 
             w.send(&msg).await?;
         }
+
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::str::FromStr;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    use crate::protocol::{Message, DNS};
+
+    use super::*;
+
+    #[derive(Clone)]
+    struct MockHandler {
+        cnt: Arc<AtomicU64>,
+        resp: Message,
+    }
+
+    #[async_trait::async_trait]
+    impl Handler for MockHandler {
+        async fn handle(&self, req: &mut Message) -> Result<Option<Message>> {
+            self.cnt.fetch_add(1, Ordering::SeqCst);
+            Ok(Some(Clone::clone(&self.resp)))
+        }
+    }
+
+    fn init() {
+        pretty_env_logger::try_init_timed().ok();
+    }
+
+    #[tokio::test]
+    async fn test_tcp_listen() -> anyhow::Result<()> {
+        init();
+
+        let req = {
+            let raw = hex::decode(
+                "f2500120000100000000000105626169647503636f6d00000100010000291000000000000000",
+            )
+            .unwrap();
+            Message::from(raw)
+        };
+
+        let res = {
+            let raw = hex::decode("f2508180000100020000000105626169647503636f6d0000010001c00c00010001000000b70004279c420ac00c00010001000000b700046ef244420000290580000000000000").unwrap();
+            Message::from(raw)
+        };
+
+        let cnts = Arc::new(AtomicU64::new(0));
+
+        let h = MockHandler {
+            cnt: Clone::clone(&cnts),
+            resp: Clone::clone(&res),
+        };
+
+        let cs = CacheStore::builder().build();
+
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let port = listener.local_addr().unwrap().port();
+
+        let server = TcpServer::new(listener, h, Some(cs));
+
+        tokio::spawn(async move {
+            server.listen().await.expect("server stopped");
+        });
+
+        let dns = DNS::from_str(&format!("tcp://127.0.0.1:{}", port))?;
+
+        // no cache
+        assert!(dns.request(&req).await.is_ok_and(|msg| &msg == &res));
+
+        // use cache
+        assert!(dns.request(&req).await.is_ok_and(|msg| &msg == &res));
+
+        assert_eq!(
+            1,
+            cnts.load(Ordering::SeqCst),
+            "should only call handler once!"
+        );
 
         Ok(())
     }

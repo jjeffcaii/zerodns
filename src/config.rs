@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
-use toml::Value;
 
 use serde::{Deserialize, Serialize};
+use toml::Value;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -36,4 +36,22 @@ pub(crate) fn read_from_toml(pt: PathBuf) -> anyhow::Result<Config> {
     let s = String::from_utf8(b)?;
     let c: Config = toml::from_str(&s)?;
     Ok(c)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_read_from_toml() {
+        let pt = PathBuf::from("config.toml");
+        let c = read_from_toml(pt);
+
+        assert!(c.is_ok_and(|c| {
+            assert!(!c.server.listen.is_empty());
+            assert!(!c.rules.is_empty());
+            assert!(!c.filters.is_empty());
+            true
+        }));
+    }
 }

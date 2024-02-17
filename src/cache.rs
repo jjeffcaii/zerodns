@@ -24,10 +24,8 @@ impl CacheStore {
     }
 
     pub(crate) async fn set(&self, req: &Message, resp: &Message) {
-        let mut key = Clone::clone(req);
-        key.set_id(0);
-        let mut val = Clone::clone(resp);
-        val.set_id(0);
+        let key = Clone::clone(req);
+        let val = Clone::clone(resp);
 
         let mut expired_at = Instant::now().add(self.ttl);
 
@@ -61,5 +59,56 @@ impl CacheStoreBuilder {
         let cache = Cache::builder().max_capacity(capacity as u64).build();
 
         CacheStore { ttl, cache }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::time::{sleep, Duration};
+
+    fn init() {
+        pretty_env_logger::try_init_timed().ok();
+    }
+
+    #[tokio::test]
+    async fn test_get_and_set() {
+        init();
+
+        let req = {
+            let raw = hex::decode(
+                "f2500120000100000000000105626169647503636f6d00000100010000291000000000000000",
+            )
+            .unwrap();
+            Message::from(raw)
+        };
+
+        let res = {
+            let raw = hex::decode("f2508180000100020000000105626169647503636f6d0000010001c00c00010001000000b70004279c420ac00c00010001000000b700046ef244420000290580000000000000").unwrap();
+            Message::from(raw)
+        };
+
+        let cs = CacheStore::builder().ttl(2).capacity(100).build();
+        assert!(cs.get(&req).await.is_none());
+
+        cs.set(&req, &res).await;
+
+        let is_expired = |expired_at: Instant| {
+            let ttl = expired_at.duration_since(Instant::now());
+            info!("ttl: {:?}", ttl);
+            ttl <= Duration::ZERO
+        };
+
+        assert!(cs.get(&req).await.is_some_and(|(expired_at, msg)| {
+            assert_eq!(&res, &msg);
+            !is_expired(expired_at)
+        }));
+
+        sleep(Duration::from_secs(2)).await;
+
+        assert!(cs.get(&req).await.is_some_and(|(expired_at, msg)| {
+            assert_eq!(&res, &msg);
+            is_expired(expired_at)
+        }));
     }
 }
