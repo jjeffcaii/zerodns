@@ -4,11 +4,24 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use byteorder::{BigEndian, ByteOrder};
 use bytes::{Bytes, BytesMut};
 
-// http://www.tcpipguide.com/free/t_DNSMessagingandMessageResourceRecordandMasterFileF.htm
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RCode {
+    NoError = 0,
+    FormatError = 1,
+    ServerFailure = 2,
+    NameError = 3,
+    NotImplemented = 4,
+    Refused = 5,
+    YXDomain = 6,
+    YXRRSet = 7,
+    NXRRSet = 8,
+    NotAuth = 9,
+    NotZone = 10,
+}
 
 #[allow(clippy::upper_case_acronyms)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum Type {
+pub enum Kind {
     /// a host address
     A = 1,
     /// an authoritative name handler
@@ -59,7 +72,7 @@ pub enum Type {
     ANY = 255,
 }
 
-impl Type {
+impl Kind {
     pub fn parse_u16(code: u16) -> Option<Self> {
         match code {
             1 => Some(Self::A),
@@ -116,31 +129,42 @@ impl QClass {
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum OpCode {
-    Standard,
-    Inverse,
+    StandardQuery = 0,
+    InverseQuery = 1,
+    Status = 2,
+    Reserved = 3,
+    Notify = 4,
+    Update = 5,
 }
 
+/// DNS Message Flags:
+///  - http://www.tcpipguide.com/free/t_DNSMessageHeaderandQuestionSectionFormat.htm
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Flags(u16);
 
 impl Flags {
     pub fn is_response(&self) -> bool {
-        self.0 & 0x0001 != 0
+        self.0 & 0x8000 != 0
     }
 
     pub fn opcode(&self) -> OpCode {
-        match self.0 & 0b0000_0000_0001_1110 {
-            0b0000_0000_0000_0000 => OpCode::Standard,
-            0b0000_0000_0000_0100 => OpCode::Inverse,
+        match (self.0 >> 11) & 0x000f {
+            0 => OpCode::StandardQuery,
+            1 => OpCode::InverseQuery,
+            2 => OpCode::Status,
+            3 => OpCode::Reserved,
+            4 => OpCode::Notify,
+            5 => OpCode::Update,
             _ => unreachable!(),
         }
     }
 
     pub fn is_authoritative(&self) -> bool {
-        (self.0 >> 6) & 0x01 != 0
+        (self.0 >> 10) & 0x01 != 0
     }
 
     pub fn is_message_truncated(&self) -> bool {
-        (self.0 >> 7) & 0x01 != 0
+        (self.0 >> 9) & 0x01 != 0
     }
 
     pub fn is_recursive_query(&self) -> bool {
@@ -148,11 +172,35 @@ impl Flags {
     }
 
     pub fn is_recursion_available(&self) -> bool {
-        (self.0 >> 9) & 0x01 != 0
+        (self.0 >> 7) & 0x01 != 0
+    }
+
+    pub fn reserved(&self) -> u16 {
+        // 3 bits
+        (self.0 >> 4) & 0x0007
+    }
+
+    pub fn response_code(&self) -> RCode {
+        match self.0 & 0x000f {
+            0 => RCode::NoError,
+            1 => RCode::FormatError,
+            2 => RCode::ServerFailure,
+            3 => RCode::NameError,
+            4 => RCode::NotImplemented,
+            5 => RCode::Refused,
+            6 => RCode::YXDomain,
+            7 => RCode::YXRRSet,
+            8 => RCode::NXRRSet,
+            9 => RCode::NotAuth,
+            10 => RCode::NotZone,
+            _ => unreachable!(),
+        }
     }
 }
 
-// https://www.firewall.cx/networking/network-protocols/dns-protocol/protocols-dns-query.html
+/// DNS message, see links below:
+///  - https://www.firewall.cx/networking/network-protocols/dns-protocol/protocols-dns-query.html
+///  - http://www.tcpipguide.com/free/t_DNSMessagingandMessageResourceRecordandMasterFileF.htm
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct Message(pub(crate) BytesMut);
 
@@ -173,18 +221,25 @@ impl Message {
         Flags(BigEndian::read_u16(&self.0[2..]))
     }
 
+    #[inline]
+    pub fn question_count(&self) -> u16 {
+        BigEndian::read_u16(&self.0[4..])
+    }
+
     pub fn questions(&self) -> impl Iterator<Item = Question<'_>> {
-        let questions_num = BigEndian::read_u16(&self.0[4..]);
         QuestionIter {
             raw: &self.0,
             offset: 12,
-            lefts: questions_num,
+            lefts: self.question_count(),
         }
     }
 
-    pub fn answers(&self) -> impl Iterator<Item = RR<'_>> {
-        let n = BigEndian::read_u16(&self.0[6..]);
+    #[inline]
+    pub fn answer_count(&self) -> u16 {
+        BigEndian::read_u16(&self.0[6..])
+    }
 
+    pub fn answers(&self) -> impl Iterator<Item = RR<'_>> {
         let mut offset = 12;
         for next in self.questions() {
             offset += next.len();
@@ -193,15 +248,15 @@ impl Message {
         RRIter {
             raw: &self.0[..],
             offset,
-            lefts: n,
+            lefts: self.answer_count(),
         }
     }
 
-    pub fn authority(&self) -> u16 {
+    pub fn authority_count(&self) -> u16 {
         BigEndian::read_u16(&self.0[8..])
     }
 
-    pub fn additional(&self) -> u16 {
+    pub fn additional_count(&self) -> u16 {
         BigEndian::read_u16(&self.0[10..])
     }
 }
@@ -230,7 +285,7 @@ impl From<Vec<u8>> for Message {
     }
 }
 
-pub struct QuestionIter<'a> {
+struct QuestionIter<'a> {
     raw: &'a [u8],
     offset: usize,
     lefts: u16,
@@ -275,9 +330,9 @@ impl Question<'_> {
         }
     }
 
-    pub fn typ(&self) -> Type {
+    pub fn kind(&self) -> Kind {
         let n = self.offset + self.name().len();
-        Type::parse_u16(BigEndian::read_u16(&self.raw[n..])).unwrap()
+        Kind::parse_u16(BigEndian::read_u16(&self.raw[n..])).unwrap()
     }
 
     pub fn class(&self) -> QClass {
@@ -313,6 +368,7 @@ impl<'a> Iterator for RRIter<'a> {
     }
 }
 
+/// Resource Record
 pub struct RR<'a> {
     raw: &'a [u8],
     offset: usize,
@@ -326,9 +382,9 @@ impl RR<'_> {
         }
     }
 
-    pub fn typ(&self) -> Type {
+    pub fn kind(&self) -> Kind {
         let offset = self.offset + self.name().len();
-        Type::parse_u16(BigEndian::read_u16(&self.raw[offset..])).unwrap()
+        Kind::parse_u16(BigEndian::read_u16(&self.raw[offset..])).unwrap()
     }
 
     pub fn class(&self) -> QClass {
@@ -461,8 +517,6 @@ impl<'a> Iterator for Notation<'a> {
 
 #[cfg(test)]
 mod tests {
-    use std::net::Ipv4Addr;
-
     use super::*;
 
     fn init() {
@@ -482,11 +536,11 @@ mod tests {
         assert_eq!(0x1afb, dq.id());
         assert_eq!(0x0120, dq.flags().0);
         assert!(!dq.flags().is_response());
-        assert_eq!(OpCode::Standard, dq.flags().opcode());
+        assert_eq!(OpCode::StandardQuery, dq.flags().opcode());
 
         for (i, question) in dq.questions().enumerate() {
             let name = question.name();
-            let typ = question.typ();
+            let typ = question.kind();
             let class = question.class();
             info!(
                 "question#{}: name={}, type={:?}, class={:?}",
@@ -507,27 +561,16 @@ mod tests {
         };
 
         for (i, answer) in message.answers().enumerate() {
-            let mut v = vec![];
-            for (j, next) in answer.name().enumerate() {
-                if j > 0 {
-                    v.push(b'.');
-                }
-                v.extend_from_slice(next);
-            }
-
             let mut v4 = [0u8; 4];
             (0..4).for_each(|i| v4[i] = answer.data()[i]);
 
-            let typ = answer.typ();
+            let kind = answer.kind();
             let class = answer.class();
-
+            let name = answer.name();
+            let addr = answer.data_as_ipaddr();
             info!(
-                "answer#{}: domain={}, type={:?}, class={:?}, address={}",
-                i,
-                String::from_utf8_lossy(&v[..]),
-                answer.typ(),
-                answer.class(),
-                Ipv4Addr::from(v4),
+                "answer#{}: domain={}, type={:?}, class={:?}, address={:?}",
+                i, name, kind, class, addr,
             );
         }
     }
@@ -541,11 +584,11 @@ mod tests {
         };
 
         for (i, answer) in msg.answers().enumerate() {
-            match answer.typ() {
-                Type::A => {
+            match answer.kind() {
+                Kind::A => {
                     info!("A: {:?}", answer.data_as_ipaddr());
                 }
-                Type::CNAME => {
+                Kind::CNAME => {
                     info!("CNAME: {}", answer.data_as_cname());
                 }
                 _ => (),
@@ -570,5 +613,33 @@ mod tests {
         let cname = format!("{}", &notation);
         info!("CNAME: {}", &cname);
         assert_eq!("youtube-ui.l.google.com", &cname);
+    }
+
+    #[test]
+    fn test_flags() {
+        init();
+
+        let msg = {
+            let raw = hex::decode(
+                "6e1c818200010000000000010462696e6702636e00000100010000290580000000000000",
+            )
+            .unwrap();
+            Message::from(raw)
+        };
+
+        let f = msg.flags();
+        assert_eq!(0x8182, f.0);
+        assert!(f.is_response(), "should be response");
+        assert_eq!(
+            OpCode::StandardQuery,
+            f.opcode(),
+            "should be standard query"
+        );
+        assert!(!f.is_authoritative());
+        assert!(!f.is_message_truncated());
+        assert!(f.is_recursive_query());
+        assert!(f.is_recursion_available());
+        assert_eq!(0, f.reserved());
+        assert_eq!(RCode::ServerFailure, f.response_code());
     }
 }

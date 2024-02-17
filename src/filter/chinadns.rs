@@ -6,7 +6,7 @@ use maxminddb::Reader;
 use smallvec::SmallVec;
 
 use crate::filter::misc::OptionsReader;
-use crate::protocol::{Message, Type, DNS};
+use crate::protocol::{Kind, Message, DNS};
 use crate::Result;
 
 use super::{Context, Filter, FilterFactory, Options};
@@ -29,7 +29,7 @@ impl ChinaDNSFilter {
             if let Ok(r) = server.request(req).await {
                 if all_china {
                     // reject answers of china ips
-                    for next in r.answers().filter(|it| it.typ() == Type::A) {
+                    for next in r.answers().filter(|it| it.kind() == Kind::A) {
                         if let Some(addr) = next.data_as_ipaddr() {
                             if !Self::is_china(geoip, &addr) {
                                 return None;
