@@ -1,4 +1,4 @@
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -6,7 +6,7 @@ use maxminddb::Reader;
 use smallvec::SmallVec;
 
 use crate::filter::misc::OptionsReader;
-use crate::protocol::{Kind, Message, DNS};
+use crate::protocol::{Kind, Message, RData, DNS};
 use crate::Result;
 
 use super::{Context, Filter, FilterFactory, Options};
@@ -30,8 +30,8 @@ impl ChinaDNSFilter {
                 if all_china {
                     // reject answers of china ips
                     for next in r.answers().filter(|it| it.kind() == Kind::A) {
-                        if let Some(addr) = next.data_as_ipaddr() {
-                            if !Self::is_china(geoip, &addr) {
+                        if let Ok(RData::A(a)) = next.rdata() {
+                            if !Self::is_china(geoip, a.ipaddr()) {
                                 return None;
                             }
                         }
@@ -45,9 +45,9 @@ impl ChinaDNSFilter {
     }
 
     #[inline(always)]
-    fn is_china(geoip: &Reader<Vec<u8>>, addr: &IpAddr) -> bool {
+    fn is_china(geoip: &Reader<Vec<u8>>, addr: Ipv4Addr) -> bool {
         let mut is_china = false;
-        if let Ok(country) = geoip.lookup::<maxminddb::geoip2::Country>(Clone::clone(addr)) {
+        if let Ok(country) = geoip.lookup::<maxminddb::geoip2::Country>(IpAddr::V4(addr)) {
             if let Some(country) = country.country {
                 is_china = matches!(country.iso_code, Some("CN"));
             }
@@ -178,7 +178,6 @@ impl FilterFactory for ChinaDNSFilterFactory {
 #[cfg(test)]
 mod tests {
     use bytes::Bytes;
-    use smallvec::SmallVec;
 
     use super::*;
 
@@ -203,20 +202,10 @@ mod tests {
 
         let show = |msg: &Message| {
             for next in msg.answers() {
-                let addr = next.data_as_ipaddr();
-
-                let mut v = SmallVec::<[u8; 64]>::new();
-                for (i, b) in next.name().enumerate() {
-                    if i != 0 {
-                        v.push(b'.');
-                    }
-                    v.extend_from_slice(b);
-                }
-
                 info!(
-                    "answer: domain={}, address={:?}",
-                    String::from_utf8_lossy(&v[..]),
-                    &addr
+                    "answer: domain={}, rdata={}",
+                    next.name(),
+                    next.rdata().unwrap(),
                 );
             }
         };

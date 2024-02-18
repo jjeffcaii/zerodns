@@ -1,5 +1,5 @@
-use std::fmt::Display;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::fmt::{Display, Formatter};
+use std::net::Ipv4Addr;
 
 use byteorder::{BigEndian, ByteOrder};
 use bytes::{Bytes, BytesMut};
@@ -256,6 +256,22 @@ impl Message {
         BigEndian::read_u16(&self.0[8..])
     }
 
+    pub fn authorities(&self) -> impl Iterator<Item = RR<'_>> {
+        let mut offset = 12;
+        for next in self.questions() {
+            offset += next.len();
+        }
+        for next in self.answers() {
+            offset += next.len();
+        }
+
+        RRIter {
+            raw: &self.0[..],
+            offset,
+            lefts: self.authority_count(),
+        }
+    }
+
     pub fn additional_count(&self) -> u16 {
         BigEndian::read_u16(&self.0[10..])
     }
@@ -398,39 +414,47 @@ impl RR<'_> {
         BigEndian::read_u32(&self.raw[offset..])
     }
 
-    pub fn data(&self) -> &[u8] {
+    #[inline(always)]
+    fn data_offset_and_size(&self) -> (usize, usize) {
         let offset = self.offset + self.name().len() + 8;
         let size = BigEndian::read_u16(&self.raw[offset..]) as usize;
-        &self.raw[offset + 2..offset + 2 + size]
+        (offset + 2, size)
     }
 
-    pub fn data_as_cname(&self) -> Notation<'_> {
-        let pos = self.offset + self.name().len() + 10;
-        Notation { raw: self.raw, pos }
+    pub fn rdata(&self) -> crate::Result<RData<'_>> {
+        let (offset, size) = self.data_offset_and_size();
+        Ok(match self.kind() {
+            Kind::A => {
+                if size != 4 {
+                    bail!(
+                        "invalid RR format: size of type(A) should be 4, actual is {}",
+                        size
+                    );
+                }
+                RData::A(A(&self.raw[offset..offset + size]))
+            }
+            Kind::CNAME => RData::CNAME(CNAME {
+                raw: &self.raw[..offset + size],
+                offset,
+                size,
+            }),
+            Kind::SOA => RData::SOA(SOA {
+                raw: &self.raw[..offset + size],
+                offset,
+                size,
+            }),
+            Kind::MX => RData::MX(MX {
+                raw: &self.raw[..offset + size],
+                offset,
+                size,
+            }),
+            _ => RData::UNKNOWN(&self.raw[offset..offset + size]),
+        })
     }
 
-    pub fn data_as_ipaddr(&self) -> Option<IpAddr> {
-        let data = self.data();
-        match data.len() {
-            4 => {
-                let v4 = Ipv4Addr::new(data[0], data[1], data[2], data[3]);
-                Some(IpAddr::V4(v4))
-            }
-            16 => {
-                let v6 = Ipv6Addr::new(
-                    BigEndian::read_u16(data),
-                    BigEndian::read_u16(&data[2..]),
-                    BigEndian::read_u16(&data[4..]),
-                    BigEndian::read_u16(&data[6..]),
-                    BigEndian::read_u16(&data[8..]),
-                    BigEndian::read_u16(&data[10..]),
-                    BigEndian::read_u16(&data[12..]),
-                    BigEndian::read_u16(&data[14..]),
-                );
-                Some(IpAddr::V6(v6))
-            }
-            _ => None,
-        }
+    pub fn data(&self) -> &[u8] {
+        let (offset, size) = self.data_offset_and_size();
+        &self.raw[offset..offset + size]
     }
 
     pub fn len(&self) -> usize {
@@ -515,6 +539,189 @@ impl<'a> Iterator for Notation<'a> {
     }
 }
 
+#[allow(clippy::upper_case_acronyms)]
+#[derive(Debug)]
+pub enum RData<'a> {
+    A(A<'a>),
+    CNAME(CNAME<'a>),
+    MX(MX<'a>),
+    SOA(SOA<'a>),
+    UNKNOWN(&'a [u8]),
+}
+
+impl<'a> Display for RData<'a> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RData::A(a) => write!(f, "RData({})", a),
+            RData::CNAME(it) => write!(f, "RData({})", it),
+            RData::MX(it) => write!(f, "RData({})", it),
+            RData::SOA(it) => write!(f, "RData({})", it),
+            RData::UNKNOWN(b) => write!(f, "RData(UNKNOWN {:?})", b),
+        }
+    }
+}
+
+#[allow(clippy::upper_case_acronyms)]
+#[derive(Debug)]
+pub struct A<'a>(&'a [u8]);
+
+impl A<'_> {
+    pub fn ipaddr(&self) -> Ipv4Addr {
+        Ipv4Addr::new(self.0[0], self.0[1], self.0[2], self.0[3])
+    }
+}
+
+impl<'a> Display for A<'a> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "A {}.{}.{}.{}",
+            self.0[0], self.0[1], self.0[2], self.0[3]
+        )
+    }
+}
+
+#[allow(clippy::upper_case_acronyms)]
+#[derive(Debug)]
+pub struct MX<'a> {
+    raw: &'a [u8],
+    offset: usize,
+    size: usize,
+}
+
+impl MX<'_> {
+    pub fn len(&self) -> usize {
+        self.size
+    }
+
+    pub fn preference(&self) -> u16 {
+        BigEndian::read_u16(&self.raw[self.offset..])
+    }
+
+    pub fn mail_exchange(&self) -> Notation<'_> {
+        Notation {
+            raw: &self.raw[..self.offset + self.size],
+            pos: 2 + self.offset,
+        }
+    }
+}
+
+impl<'a> Display for MX<'a> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "MX {} {}", self.preference(), self.mail_exchange())
+    }
+}
+
+#[allow(clippy::upper_case_acronyms)]
+#[derive(Debug)]
+pub struct CNAME<'a> {
+    raw: &'a [u8],
+    offset: usize,
+    size: usize,
+}
+
+impl CNAME<'_> {
+    pub fn len(&self) -> usize {
+        self.size
+    }
+
+    pub fn cname(&self) -> Notation<'_> {
+        Notation {
+            raw: &self.raw[..self.offset + self.size],
+            pos: self.offset,
+        }
+    }
+}
+
+impl<'a> Display for CNAME<'a> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "CNAME {}", self.cname())
+    }
+}
+
+#[allow(clippy::upper_case_acronyms)]
+#[derive(Debug)]
+pub struct SOA<'a> {
+    raw: &'a [u8],
+    offset: usize,
+    size: usize,
+}
+
+impl SOA<'_> {
+    pub fn len(&self) -> usize {
+        self.size
+    }
+
+    pub fn primary_nameserver(&self) -> Notation<'_> {
+        Notation {
+            raw: self.raw,
+            pos: self.offset,
+        }
+    }
+
+    pub fn responsible_authority_mailbox(&self) -> Notation<'_> {
+        Notation {
+            raw: self.raw,
+            pos: self.offset + self.primary_nameserver().len(),
+        }
+    }
+
+    pub fn serial_number(&self) -> u32 {
+        let offset = self.offset
+            + self.primary_nameserver().len()
+            + self.responsible_authority_mailbox().len();
+        BigEndian::read_u32(&self.raw[offset..])
+    }
+
+    pub fn refresh_interval(&self) -> u32 {
+        let offset = self.offset
+            + self.primary_nameserver().len()
+            + self.responsible_authority_mailbox().len()
+            + 4;
+        BigEndian::read_u32(&self.raw[offset..])
+    }
+
+    pub fn retry_interval(&self) -> u32 {
+        let offset = self.offset
+            + self.primary_nameserver().len()
+            + self.responsible_authority_mailbox().len()
+            + 8;
+        BigEndian::read_u32(&self.raw[offset..])
+    }
+
+    pub fn expire_limit(&self) -> u32 {
+        let offset = self.offset
+            + self.primary_nameserver().len()
+            + self.responsible_authority_mailbox().len()
+            + 12;
+        BigEndian::read_u32(&self.raw[offset..])
+    }
+
+    pub fn minimum_ttl(&self) -> u32 {
+        let offset = self.offset
+            + self.primary_nameserver().len()
+            + self.responsible_authority_mailbox().len()
+            + 16;
+        BigEndian::read_u32(&self.raw[offset..])
+    }
+}
+
+impl<'a> Display for SOA<'a> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "SOA {} {} {} {} {} {} {}",
+            self.primary_nameserver(),
+            self.responsible_authority_mailbox(),
+            self.serial_number(),
+            self.refresh_interval(),
+            self.retry_interval(),
+            self.expire_limit(),
+            self.minimum_ttl(),
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -561,38 +768,14 @@ mod tests {
         };
 
         for (i, answer) in message.answers().enumerate() {
-            let mut v4 = [0u8; 4];
-            (0..4).for_each(|i| v4[i] = answer.data()[i]);
-
             let kind = answer.kind();
             let class = answer.class();
             let name = answer.name();
-            let addr = answer.data_as_ipaddr();
+            let rdata = answer.rdata().unwrap();
             info!(
-                "answer#{}: domain={}, type={:?}, class={:?}, address={:?}",
-                i, name, kind, class, addr,
+                "answer#{}: domain={}, type={:?}, class={:?}, rdata={}",
+                i, name, kind, class, rdata,
             );
-        }
-    }
-
-    #[test]
-    fn test_youtube() {
-        init();
-        let msg = {
-            let raw = hex::decode("e7ad81800001000e000000010377777707796f757475626503636f6d0000010001c00c00050001000000ab00160a796f75747562652d7569016c06676f6f676c65c018c02d00010001000000ad00048efa442ec02d00010001000000ad00048efa48eec02d00010001000000ad00048efabceec02d00010001000000ad00048efa488ec02d00010001000000ad00048efa48aec02d00010001000000ad00048efab00ec02d00010001000000ad00048efabd0ec02d00010001000000ad00048efad98ec02d00010001000000ad00048efb282ec02d00010001000000ad00048efa440ec02d00010001000000ad0004acd90c8ec02d00010001000000ad0004acd90e4ec02d00010001000000ad00048efa446e0000290200000000000000").unwrap();
-            Message::from(raw)
-        };
-
-        for (i, answer) in msg.answers().enumerate() {
-            match answer.kind() {
-                Kind::A => {
-                    info!("A: {:?}", answer.data_as_ipaddr());
-                }
-                Kind::CNAME => {
-                    info!("CNAME: {}", answer.data_as_cname());
-                }
-                _ => (),
-            }
         }
     }
 
@@ -641,5 +824,89 @@ mod tests {
         assert!(f.is_recursion_available());
         assert_eq!(0, f.reserved());
         assert_eq!(RCode::ServerFailure, f.response_code());
+    }
+
+    #[test]
+    fn test_rdata_mx() {
+        init();
+
+        let msg = {
+            let raw = hex::decode("63998180000100010000000107796f757475626503636f6d00000f0001c00c000f00010000012c0010000004736d747006676f6f676c65c0140000290200000000000000").unwrap();
+            Message::from(raw)
+        };
+
+        assert_eq!(1, msg.answer_count());
+
+        assert!(msg.answers().next().is_some_and(|answer| {
+            answer.rdata().is_ok_and(|rdata| {
+                info!("rdata: {}", rdata);
+
+                let mut ok = false;
+                if let RData::MX(mx) = rdata {
+                    ok = true;
+                    assert_eq!(16, mx.len());
+                    assert_eq!(0, mx.preference());
+                    assert_eq!("smtp.google.com", &format!("{}", mx.mail_exchange()));
+                }
+                ok
+            })
+        }))
+    }
+
+    #[test]
+    fn test_rdata_cname() {
+        init();
+        let msg = {
+            let raw = hex::decode("e7ad81800001000e000000010377777707796f757475626503636f6d0000010001c00c00050001000000ab00160a796f75747562652d7569016c06676f6f676c65c018c02d00010001000000ad00048efa442ec02d00010001000000ad00048efa48eec02d00010001000000ad00048efabceec02d00010001000000ad00048efa488ec02d00010001000000ad00048efa48aec02d00010001000000ad00048efab00ec02d00010001000000ad00048efabd0ec02d00010001000000ad00048efad98ec02d00010001000000ad00048efb282ec02d00010001000000ad00048efa440ec02d00010001000000ad0004acd90c8ec02d00010001000000ad0004acd90e4ec02d00010001000000ad00048efa446e0000290200000000000000").unwrap();
+            Message::from(raw)
+        };
+
+        for (i, answer) in msg.answers().enumerate() {
+            let rdata = answer.rdata();
+            assert!(rdata.is_ok());
+            let rdata = rdata.unwrap();
+
+            info!("answer#{}: rdata={}", i, &rdata);
+
+            match answer.kind() {
+                Kind::A => {
+                    assert!(matches!(rdata, RData::A(_)));
+                }
+                Kind::CNAME => {
+                    assert!(matches!(rdata, RData::CNAME(_)));
+                }
+                _ => (),
+            }
+        }
+    }
+
+    #[test]
+    fn test_soa() {
+        init();
+
+        let msg = {
+            let raw = hex::decode("b032818000010001000100010377777707796f757475626503636f6d0000060001c00c000500010000012c00160a796f75747562652d7569016c06676f6f676c65c018c038000600010000003c0026036e7331c03a09646e732d61646d696ec03a243c546e0000038400000384000007080000003c0000290200000000000000").unwrap();
+            Message::from(raw)
+        };
+
+        assert_eq!(1, msg.authority_count());
+
+        for next in msg.authorities() {
+            let rdata = next.rdata();
+
+            if let Ok(RData::SOA(soa)) = rdata {
+                info!("{}", &soa);
+                assert_eq!("ns1.google.com", &format!("{}", soa.primary_nameserver()));
+                assert_eq!(
+                    "dns-admin.google.com",
+                    &format!("{}", soa.responsible_authority_mailbox())
+                );
+                assert_eq!(607933550, soa.serial_number());
+                assert_eq!(900, soa.refresh_interval());
+                assert_eq!(900, soa.retry_interval());
+                assert_eq!(1800, soa.expire_limit());
+                assert_eq!(60, soa.minimum_ttl());
+            }
+        }
     }
 }

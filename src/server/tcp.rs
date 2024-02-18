@@ -4,6 +4,7 @@ use std::time::{Duration, Instant};
 
 use futures::{SinkExt, StreamExt};
 use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::Notify;
 use tokio_util::codec::{FramedRead, FramedWrite};
 
 use crate::cache::CacheStore;
@@ -15,11 +16,22 @@ pub struct TcpServer<H> {
     h: H,
     listener: TcpListener,
     cache: Option<CacheStore>,
+    closer: Arc<Notify>,
 }
 
 impl<H> TcpServer<H> {
-    pub fn new(listener: TcpListener, h: H, cache: Option<CacheStore>) -> Self {
-        Self { h, listener, cache }
+    pub fn new(
+        listener: TcpListener,
+        h: H,
+        cache: Option<CacheStore>,
+        closer: Arc<Notify>,
+    ) -> Self {
+        Self {
+            h,
+            listener,
+            cache,
+            closer,
+        }
     }
 }
 
@@ -28,22 +40,36 @@ where
     H: Handler,
 {
     pub async fn listen(self) -> Result<()> {
-        let Self { h, listener, cache } = self;
+        let Self {
+            h,
+            listener,
+            cache,
+            closer,
+        } = self;
         let h = Arc::new(h);
 
         info!("tcp dns server is listening on {}", listener.local_addr()?);
 
         loop {
-            let (stream, addr) = listener.accept().await?;
-
-            let h = Clone::clone(&h);
-            let cache = Clone::clone(&cache);
-            tokio::spawn(async move {
-                if let Err(e) = Self::handle(stream, addr, h, cache).await {
-                    error!("failed to handle tcp stream: {:?}", e);
+            tokio::select! {
+                accept = listener.accept() => {
+                    let (stream, addr) = accept?;
+                    let h = Clone::clone(&h);
+                    let cache = Clone::clone(&cache);
+                    tokio::spawn(async move {
+                        if let Err(e) = Self::handle(stream, addr, h, cache).await {
+                            error!("failed to handle tcp stream: {:?}", e);
+                        }
+                    });
                 }
-            });
+                () = closer.notified() => {
+                    info!("close signal is received, tcp dns server is stopping...");
+                    break;
+                }
+            }
         }
+
+        Ok(())
     }
 
     async fn handle(
@@ -154,8 +180,9 @@ mod tests {
 
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let port = listener.local_addr().unwrap().port();
+        let closer = Arc::new(Notify::new());
 
-        let server = TcpServer::new(listener, h, Some(cs));
+        let server = TcpServer::new(listener, h, Some(cs), Clone::clone(&closer));
 
         tokio::spawn(async move {
             server.listen().await.expect("server stopped");
@@ -174,6 +201,8 @@ mod tests {
             cnts.load(Ordering::SeqCst),
             "should only call handler once!"
         );
+
+        closer.notify_waiters();
 
         Ok(())
     }

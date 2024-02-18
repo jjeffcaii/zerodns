@@ -3,6 +3,7 @@ use std::time::{Duration, Instant};
 
 use bytes::BytesMut;
 use tokio::net::UdpSocket;
+use tokio::sync::Notify;
 
 use crate::cache::CacheStore;
 use crate::handler::Handler;
@@ -14,15 +15,23 @@ pub struct UdpServer<H> {
     socket: UdpSocket,
     buf: BytesMut,
     cache: Option<CacheStore>,
+    closer: Arc<Notify>,
 }
 
 impl<H> UdpServer<H> {
-    pub fn new(socket: UdpSocket, handler: H, buf: BytesMut, cache: Option<CacheStore>) -> Self {
+    pub fn new(
+        socket: UdpSocket,
+        handler: H,
+        buf: BytesMut,
+        cache: Option<CacheStore>,
+        closer: Arc<Notify>,
+    ) -> Self {
         Self {
             h: handler,
             socket,
             buf,
             cache,
+            closer,
         }
     }
 }
@@ -37,6 +46,7 @@ where
             socket,
             mut buf,
             cache,
+            closer,
         } = self;
 
         info!("udp dns server is listening on {}", socket.local_addr()?);
@@ -45,10 +55,10 @@ where
         let socket = Arc::new(socket);
 
         loop {
-            match socket.recv_buf_from(&mut buf).await {
-                Ok((n, peer)) => {
-                    let socket = Clone::clone(&socket);
-
+            let socket = Clone::clone(&socket);
+            tokio::select! {
+                recv = socket.recv_buf_from(&mut buf) => {
+                    let (n,peer) = recv?;
                     let b = buf.split_to(n);
                     let h = Clone::clone(&h);
                     let cache = Clone::clone(&cache);
@@ -102,8 +112,8 @@ where
                         }
                     });
                 }
-                Err(e) => {
-                    error!("handler stopped: {:?}", e);
+                () = closer.notified() => {
+                    info!("close signal is received, udp dns server is stopping...");
                     break;
                 }
             }
@@ -167,8 +177,15 @@ mod tests {
         let cs = CacheStore::builder().build();
         let socket = UdpSocket::bind("127.0.0.1:0").await?;
         let port = socket.local_addr().unwrap().port();
+        let closer = Arc::new(Notify::new());
 
-        let server = UdpServer::new(socket, h, BytesMut::with_capacity(4096), Some(cs));
+        let server = UdpServer::new(
+            socket,
+            h,
+            BytesMut::with_capacity(4096),
+            Some(cs),
+            Clone::clone(&closer),
+        );
 
         tokio::spawn(async move {
             server.listen().await.expect("udp server is stopped!");
@@ -187,6 +204,8 @@ mod tests {
             cnts.load(Ordering::SeqCst),
             "should only call handler once!"
         );
+
+        closer.notify_waiters();
 
         Ok(())
     }

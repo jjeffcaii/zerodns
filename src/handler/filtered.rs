@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 
 use async_trait::async_trait;
 
-use crate::filter::{Context, Filter, Options};
+use crate::filter::{Context, Filter};
 use crate::handler::Handler;
 use crate::protocol::Message;
 use crate::Result;
@@ -34,36 +34,16 @@ pub(crate) struct FilteredHandlerBuilder {
 }
 
 impl FilteredHandlerBuilder {
-    pub(crate) fn append<T>(self, next: T) -> Self
+    pub(crate) fn append<T>(mut self, next: T) -> Self
     where
         T: Filter,
     {
-        self.append_boxed(Box::new(next))
-    }
-
-    pub(crate) fn append_with<S>(self, name: S, opts: &Options) -> Self
-    where
-        S: AsRef<str>,
-    {
-        let name = name.as_ref();
-        match crate::filter::load(name, opts) {
-            Ok(f) => match f.get_boxed() {
-                Ok(v) => self.append_boxed(v),
-                Err(e) => {
-                    error!("failed to append filter '{}': {:?}", name, e);
-                    self
-                }
-            },
-            Err(e) => {
-                error!("failed to append filter '{}': {:?}", name, e);
-                self
-            }
-        }
-    }
-
-    pub(crate) fn append_boxed(mut self, next: Box<dyn Filter>) -> Self {
-        self.filters.push_back(next);
+        self.append_boxed(Box::new(next));
         self
+    }
+
+    pub(crate) fn append_boxed(&mut self, next: Box<dyn Filter>) {
+        self.filters.push_back(next);
     }
 
     pub(crate) fn build(self) -> Option<FilteredHandler> {

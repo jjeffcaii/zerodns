@@ -16,11 +16,13 @@ extern crate anyhow;
 extern crate log;
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use bytes::BytesMut;
 use clap::{Parser, Subcommand};
 use tokio::join;
 use tokio::net::{TcpListener, UdpSocket};
+use tokio::sync::Notify;
 
 use crate::handler::RuledHandler;
 use crate::server::{TcpServer, UdpServer};
@@ -64,8 +66,6 @@ async fn main() -> Result<()> {
         Commands::Run { config: path } => {
             let c = config::read_from_toml(path)?;
 
-            let socket = UdpSocket::bind(&c.server.listen).await?;
-
             let mut rb = RuledHandler::builder();
 
             for (k, v) in c.filters.iter() {
@@ -77,6 +77,7 @@ async fn main() -> Result<()> {
             }
 
             let h = rb.build();
+            let closer = Arc::new(Notify::new());
 
             let cs = match &c.server.cache_size {
                 None => None,
@@ -96,20 +97,41 @@ async fn main() -> Result<()> {
                     buffsize = 1024;
                 }
 
+                let socket = UdpSocket::bind(&c.server.listen).await?;
+
                 UdpServer::new(
                     socket,
                     Clone::clone(&h),
                     BytesMut::with_capacity(buffsize),
                     Clone::clone(&cs),
+                    Clone::clone(&closer),
                 )
             };
 
             let tcp_server = {
-                let l = TcpListener::bind(&c.server.listen).await?;
-                TcpServer::new(l, Clone::clone(&h), Clone::clone(&cs))
+                TcpServer::new(
+                    TcpListener::bind(&c.server.listen).await?,
+                    Clone::clone(&h),
+                    Clone::clone(&cs),
+                    Clone::clone(&closer),
+                )
             };
 
-            let (_first, _second) = join!(udp_server.listen(), tcp_server.listen(),);
+            let stopped = Arc::new(Notify::new());
+
+            {
+                let stopped = Clone::clone(&stopped);
+                tokio::spawn(async move {
+                    let (_first, _second) = join!(udp_server.listen(), tcp_server.listen());
+                    stopped.notify_one();
+                });
+            }
+
+            tokio::signal::ctrl_c().await?;
+
+            closer.notify_waiters();
+
+            stopped.notified().await
         }
     }
 
