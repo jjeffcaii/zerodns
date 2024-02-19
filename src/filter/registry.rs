@@ -7,7 +7,6 @@ use parking_lot::RwLock;
 use crate::filter::Filter;
 use crate::Result;
 
-// TODO: define options structure
 pub type Options = HashMap<String, toml::Value>;
 
 type Generator = Arc<dyn Send + Sync + Fn(&Options) -> Result<Box<dyn FilterFactoryExt>>>;
@@ -75,27 +74,12 @@ where
 mod tests {
     use async_trait::async_trait;
 
-    use crate::filter::Context;
-    use crate::protocol::Message;
-
     use super::*;
 
     struct MockFilter {}
 
     #[async_trait]
     impl Filter for MockFilter {
-        async fn on_request(
-            &self,
-            ctx: &mut Context,
-            req: &mut Message,
-        ) -> Result<Option<Message>> {
-            Ok(None)
-        }
-
-        async fn on_response(&self, ctx: &mut Context, res: &mut Option<Message>) -> Result<()> {
-            Ok(())
-        }
-
         fn next(&self) -> Option<&dyn Filter> {
             None
         }
@@ -121,8 +105,11 @@ mod tests {
     fn test_register() {
         init();
 
+        assert!(load("foobar", &Default::default()).is_err());
+
         register("foobar", |opts: &Options| Ok(MockFilterFactory {}));
+
         let res = load("foobar", &Default::default());
-        assert!(res.is_ok_and(|g| g.get_boxed().is_ok()));
+        assert!(res.is_ok_and(|g| g.get_boxed().is_ok_and(|f| f.next().is_none())));
     }
 }

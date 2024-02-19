@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use smallvec::SmallVec;
 
 use crate::filter::misc::OptionsReader;
 use crate::protocol::{Message, DNS};
@@ -21,16 +20,14 @@ impl Filter for ProxyByFilter {
         for addr in self.upstreams.iter() {
             if let Ok(res) = addr.request(req).await {
                 if log_enabled!(log::Level::Debug) {
-                    let mut v = SmallVec::<[u8; 64]>::new();
-                    for (i, next) in req.questions().next().unwrap().name().enumerate() {
-                        if i != 0 {
-                            v.push(b'.');
-                        }
-                        v.extend_from_slice(next);
+                    for (i, question) in req.questions().enumerate() {
+                        debug!(
+                            "proxyby#{} ok: server={:?}, name={}",
+                            i,
+                            addr,
+                            question.name()
+                        );
                     }
-                    debug!("proxyby ok: server={:?}, domain={}", addr, unsafe {
-                        std::str::from_utf8_unchecked(&v[..])
-                    });
                 }
                 return Ok(Some(res));
             }
@@ -82,6 +79,8 @@ impl FilterFactory for ProxyByFilterFactory {
 mod tests {
     use bytes::Bytes;
 
+    use crate::filter::FilterFactoryExt;
+
     use super::*;
 
     fn init() {
@@ -110,12 +109,16 @@ mod tests {
         .unwrap();
 
         let factory = ProxyByFilterFactory::try_from(&opts).unwrap();
-        let f = factory.get().unwrap();
+        let mut f = factory.get().unwrap();
         let resp = f.on_request(&mut ctx, &mut req).await;
 
         assert!(resp.is_ok_and(|res| res.is_some_and(|record| {
             info!("got: {}", record.id());
             true
         })));
+
+        assert!(f.next().is_none());
+        f.set_next(factory.get_boxed().unwrap());
+        assert!(f.next().is_some());
     }
 }

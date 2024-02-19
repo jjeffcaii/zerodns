@@ -48,10 +48,7 @@ mod tests {
         let c = read_from_toml(pt);
 
         assert!(c.is_ok_and(|c| {
-            assert!(!c.server.listen.is_empty());
-            assert!(!c.rules.is_empty());
-            assert!(!c.filters.is_empty());
-            true
+            !c.server.listen.is_empty() && !c.rules.is_empty() && !c.filters.is_empty()
         }));
     }
 }

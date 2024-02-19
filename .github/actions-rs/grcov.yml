@@ -1,3 +1,2 @@
 output-type: lcov
 output-file: ./lcov.info
-ignore: src/main.rs
