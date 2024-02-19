@@ -2,7 +2,9 @@ use std::fmt::{Display, Formatter};
 use std::net::Ipv4Addr;
 
 use byteorder::{BigEndian, ByteOrder};
-use bytes::{Bytes, BytesMut};
+use bytes::{BufMut, Bytes, BytesMut};
+use once_cell::sync::Lazy;
+use regex::Regex;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RCode {
@@ -104,7 +106,7 @@ impl Kind {
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum QClass {
+pub enum Class {
     /// the Internet
     IN = 1,
     /// the CSNET
@@ -115,7 +117,7 @@ pub enum QClass {
     HS = 4,
 }
 
-impl QClass {
+impl Class {
     pub fn parse_u16(code: u16) -> Option<Self> {
         match code {
             1 => Some(Self::IN),
@@ -137,12 +139,86 @@ pub enum OpCode {
     Update = 5,
 }
 
+pub struct FlagsBuilder(u16);
+
+impl FlagsBuilder {
+    pub fn request(mut self) -> Self {
+        self.0 &= 0x8000 - 1;
+        self
+    }
+
+    pub fn response(mut self) -> Self {
+        self.0 |= 0x8000;
+        self
+    }
+
+    pub fn opcode(mut self, opcode: OpCode) -> Self {
+        self.0 &= 0x87ff;
+        self.0 |= (opcode as u16) << 11;
+        self
+    }
+
+    pub fn rcode(mut self, c: RCode) -> Self {
+        self.0 &= 0xfff0;
+        self.0 |= c as u16;
+        self
+    }
+
+    pub fn authoritative(mut self, enabled: bool) -> Self {
+        const MASK: u16 = 1 << 10;
+        if enabled {
+            self.0 |= MASK;
+        } else {
+            self.0 &= !MASK;
+        }
+        self
+    }
+
+    pub fn truncated(mut self, enabled: bool) -> Self {
+        const MASK: u16 = 1 << 9;
+        if enabled {
+            self.0 |= MASK;
+        } else {
+            self.0 &= !MASK;
+        }
+        self
+    }
+
+    pub fn recursive_query(mut self, enabled: bool) -> Self {
+        const MASK: u16 = 1 << 8;
+        if enabled {
+            self.0 |= MASK;
+        } else {
+            self.0 &= !MASK;
+        }
+        self
+    }
+
+    pub fn recursive_available(mut self, enabled: bool) -> Self {
+        const MASK: u16 = 1 << 7;
+        if enabled {
+            self.0 |= MASK;
+        } else {
+            self.0 &= !MASK;
+        }
+        self
+    }
+
+    pub fn build(self) -> Flags {
+        Flags(self.0)
+    }
+}
+
 /// DNS Message Flags:
 ///  - http://www.tcpipguide.com/free/t_DNSMessageHeaderandQuestionSectionFormat.htm
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Flags(u16);
 
 impl Flags {
+    pub fn builder() -> FlagsBuilder {
+        FlagsBuilder(0)
+    }
+
     pub fn is_response(&self) -> bool {
         self.0 & 0x8000 != 0
     }
@@ -198,6 +274,117 @@ impl Flags {
     }
 }
 
+struct Authority<'a> {
+    name: &'a str,
+    kind: Kind,
+    class: Class,
+    ttl: u32,
+    primary_name_server: &'a str,
+    responsible_authority_mailbox: &'a str,
+    refresh_interval: u32,
+    retry_interval: u32,
+    expire_limit: u32,
+    minimum_ttl: u32,
+}
+
+struct Answer<'a> {
+    name: &'a str,
+    kind: Kind,
+    class: Class,
+    ttl: u32,
+    data: &'a [u8],
+}
+
+struct Additional {}
+
+struct Query<'a> {
+    name: &'a str,
+    kind: Kind,
+    class: Class,
+}
+
+#[derive(Default)]
+pub struct MessageBuilder<'a> {
+    id: u16,
+    flags: Flags,
+    queries: Vec<Query<'a>>,
+    answers: Vec<Answer<'a>>,
+    authorities: Vec<Authority<'a>>,
+    additionals: Vec<Additional>,
+}
+
+impl<'a> MessageBuilder<'a> {
+    pub fn id(mut self, id: u16) -> Self {
+        self.id = id;
+        self
+    }
+
+    pub fn flags(mut self, flags: Flags) -> Self {
+        self.flags = flags;
+        self
+    }
+
+    pub fn question<'b>(mut self, name: &'b str, kind: Kind, class: Class) -> Self
+    where
+        'b: 'a,
+    {
+        self.queries.push(Query { name, kind, class });
+        self
+    }
+
+    pub fn build(self) -> crate::Result<Message> {
+        let Self {
+            id,
+            flags,
+            queries,
+            answers,
+            authorities,
+            additionals,
+        } = self;
+
+        let mut b = BytesMut::with_capacity(1536);
+        b.put_u16(id);
+        b.put_u16(flags.0);
+
+        b.put_u16(queries.len() as u16);
+        b.put_u16(answers.len() as u16);
+        b.put_u16(authorities.len() as u16);
+        b.put_u16(additionals.len() as u16);
+
+        for next in queries {
+            if !is_valid_domain(next.name) {
+                bail!("invalid question name '{}'", next.name);
+            }
+            for label in next
+                .name
+                .split('.')
+                .filter(|it| !it.is_empty())
+                .map(|it| it.as_bytes())
+            {
+                b.put_u8(label.len() as u8);
+                b.put_slice(label);
+            }
+            b.put_u8(0);
+            b.put_u16(next.kind as u16);
+            b.put_u16(next.class as u16);
+        }
+
+        for next in answers {
+            // TODO: write answer
+        }
+
+        for next in authorities {
+            // TODO: write authority
+        }
+
+        for next in additionals {
+            // TODO: write additional
+        }
+
+        Ok(Message(b))
+    }
+}
+
 /// DNS message, see links below:
 ///  - https://www.firewall.cx/networking/network-protocols/dns-protocol/protocols-dns-query.html
 ///  - http://www.tcpipguide.com/free/t_DNSMessagingandMessageResourceRecordandMasterFileF.htm
@@ -205,6 +392,10 @@ impl Flags {
 pub struct Message(pub(crate) BytesMut);
 
 impl Message {
+    pub fn builder<'a>() -> MessageBuilder<'a> {
+        Default::default()
+    }
+
     pub fn len(&self) -> usize {
         self.0.len()
     }
@@ -351,9 +542,9 @@ impl Question<'_> {
         Kind::parse_u16(BigEndian::read_u16(&self.raw[n..])).unwrap()
     }
 
-    pub fn class(&self) -> QClass {
+    pub fn class(&self) -> Class {
         let n = self.offset + self.name().len() + 2;
-        QClass::parse_u16(BigEndian::read_u16(&self.raw[n..])).unwrap()
+        Class::parse_u16(BigEndian::read_u16(&self.raw[n..])).unwrap()
     }
 }
 
@@ -403,10 +594,10 @@ impl RR<'_> {
         Kind::parse_u16(BigEndian::read_u16(&self.raw[offset..])).unwrap()
     }
 
-    pub fn class(&self) -> QClass {
+    pub fn class(&self) -> Class {
         let offset = self.offset + self.name().len() + 2;
         let n = BigEndian::read_u16(&self.raw[offset..]);
-        QClass::parse_u16(n).unwrap()
+        Class::parse_u16(n).unwrap()
     }
 
     pub fn time_to_live(&self) -> u32 {
@@ -439,6 +630,11 @@ impl RR<'_> {
                 size,
             }),
             Kind::SOA => RData::SOA(SOA {
+                raw: &self.raw[..offset + size],
+                offset,
+                size,
+            }),
+            Kind::PTR => RData::PTR(PTR {
                 raw: &self.raw[..offset + size],
                 offset,
                 size,
@@ -546,6 +742,7 @@ pub enum RData<'a> {
     CNAME(CNAME<'a>),
     MX(MX<'a>),
     SOA(SOA<'a>),
+    PTR(PTR<'a>),
     UNKNOWN(&'a [u8]),
 }
 
@@ -556,6 +753,7 @@ impl<'a> Display for RData<'a> {
             RData::CNAME(it) => write!(f, "RData({})", it),
             RData::MX(it) => write!(f, "RData({})", it),
             RData::SOA(it) => write!(f, "RData({})", it),
+            RData::PTR(it) => write!(f, "RData({})", it),
             RData::UNKNOWN(b) => write!(f, "RData(UNKNOWN {:?})", b),
         }
     }
@@ -609,6 +807,29 @@ impl MX<'_> {
 impl<'a> Display for MX<'a> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "MX {} {}", self.preference(), self.mail_exchange())
+    }
+}
+
+#[allow(clippy::upper_case_acronyms)]
+#[derive(Debug)]
+pub struct PTR<'a> {
+    raw: &'a [u8],
+    offset: usize,
+    size: usize,
+}
+
+impl PTR<'_> {
+    pub fn domain_name(&self) -> Notation<'_> {
+        Notation {
+            raw: self.raw,
+            pos: self.offset,
+        }
+    }
+}
+
+impl Display for PTR<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "PTR {}", self.domain_name())
     }
 }
 
@@ -722,6 +943,12 @@ impl<'a> Display for SOA<'a> {
     }
 }
 
+fn is_valid_domain(domain: &str) -> bool {
+    static RE: Lazy<Regex> =
+        Lazy::new(|| Regex::new("^([a-z0-9]{1,63})(\\.[a-z0-9]{1,63})+\\.?$").unwrap());
+    RE.is_match(domain)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -754,7 +981,7 @@ mod tests {
                 i, name, typ, class
             );
             assert_eq!(1u16, typ as u16);
-            assert_eq!(QClass::IN, class);
+            assert_eq!(Class::IN, class);
         }
     }
 
@@ -824,6 +1051,31 @@ mod tests {
         assert!(f.is_recursion_available());
         assert_eq!(0, f.reserved());
         assert_eq!(RCode::ServerFailure, f.response_code());
+    }
+
+    #[test]
+    fn test_rdata_ptr() {
+        init();
+        let msg = {
+            let raw = hex::decode("042f81800001000100000001013101310131013107696e2d61646472046172706100000c0001c00c000c0001000007080011036f6e65036f6e65036f6e65036f6e65000000290580000000000000").unwrap();
+            Message::from(raw)
+        };
+
+        assert_eq!(1, msg.answer_count());
+
+        assert!(msg.answers().next().is_some_and(|answer| {
+            assert_eq!(Kind::PTR, answer.kind());
+            assert_eq!(Class::IN, answer.class());
+            let rdata = answer.rdata();
+            rdata.is_ok_and(|rdata| {
+                let mut is_ptr = false;
+                if let RData::PTR(ptr) = &rdata {
+                    is_ptr = true;
+                    assert_eq!("one.one.one.one", &format!("{}", ptr.domain_name()));
+                }
+                is_ptr
+            })
+        }))
     }
 
     #[test]
@@ -908,5 +1160,57 @@ mod tests {
                 assert_eq!(60, soa.minimum_ttl());
             }
         }
+    }
+
+    #[test]
+    fn test_message_builder() {
+        init();
+
+        // good
+        {
+            let domain = "google.com";
+            let msg = Message::builder()
+                .id(1234)
+                .question(&format!("{}.", domain), Kind::A, Class::IN)
+                .build();
+
+            assert!(msg.is_ok_and(|msg| {
+                assert_eq!(1234, msg.id());
+                assert_eq!(1, msg.question_count());
+                assert!(msg.questions().next().is_some_and(|it| {
+                    assert_eq!(domain, &format!("{}", it.name()));
+                    true
+                }));
+
+                true
+            }));
+        }
+
+        // bad
+        {
+            let msg = Message::builder()
+                .id(1234)
+                .question("It's a bad domain", Kind::A, Class::IN)
+                .build();
+            assert!(msg.is_err());
+        }
+    }
+
+    #[test]
+    fn test_flags_builder() {
+        let flags = Flags::builder()
+            .request()
+            .recursive_query(true)
+            .opcode(OpCode::StandardQuery)
+            .build();
+
+        assert!(!flags.is_response());
+        assert_eq!(OpCode::StandardQuery, flags.opcode());
+        assert!(flags.is_recursive_query());
+        assert!(!flags.is_recursion_available());
+        assert!(!flags.is_authoritative());
+        assert!(!flags.is_message_truncated());
+        assert_eq!(0, flags.reserved());
+        assert_eq!(RCode::NoError, flags.response_code());
     }
 }

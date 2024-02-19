@@ -110,9 +110,7 @@ impl FromStr for DNS {
 
 #[cfg(test)]
 mod tests {
-    use std::net::Ipv4Addr;
-
-    use bytes::Bytes;
+    use crate::protocol::{Class, Flags, Kind, OpCode};
 
     use super::*;
 
@@ -120,18 +118,17 @@ mod tests {
         pretty_env_logger::try_init_timed().ok();
     }
 
-    fn get_request() -> Message {
-        let b = hex::decode(
-            "ca580120000100000000000106676f6f676c6503636f6d00000100010000291000000000000000",
-        )
-        .unwrap();
-        let req = Message::from(Bytes::from(b));
-
-        for (i, question) in req.questions().enumerate() {
-            info!("question#{}: {}", i, question.name());
-        }
-
-        req
+    fn get_request(domain: &str) -> Result<Message> {
+        let flags = Flags::builder()
+            .request()
+            .recursive_query(true)
+            .opcode(OpCode::StandardQuery)
+            .build();
+        Message::builder()
+            .id(0x1234)
+            .question(domain, Kind::A, Class::IN)
+            .flags(flags)
+            .build()
     }
 
     #[test]
@@ -153,14 +150,13 @@ mod tests {
         init();
 
         let addr = DNS::UDP("8.8.4.4:53".parse().unwrap());
-        let req = get_request();
+        let req = get_request("google.com.").unwrap();
         let res = addr.request(&req).await;
 
         assert!(res.is_ok_and(|it| {
             for (i, answer) in it.answers().enumerate() {
-                let data = answer.data();
-                let ip = Ipv4Addr::new(data[0], data[1], data[2], data[3]);
-                info!("answer#{}: domain={} addr={:?}", i, answer.name(), ip);
+                let rdata = answer.rdata().unwrap();
+                info!("answer#{}: domain={} rdata={}", i, answer.name(), rdata);
             }
             true
         }));
@@ -171,15 +167,15 @@ mod tests {
         init();
 
         let addr = DNS::TCP("223.5.5.5:53".parse().unwrap());
-        let req = get_request();
+
+        let req = get_request("baidu.com").unwrap();
+
         let res = addr.request(&req).await;
 
         assert!(res.is_ok_and(|it| {
             for (i, answer) in it.answers().enumerate() {
-                let data = answer.data();
-                let ip = Ipv4Addr::new(data[0], data[1], data[2], data[3]);
-
-                info!("answer#{}: domain={} addr={:?}", i, answer.name(), ip);
+                let rdata = answer.rdata().unwrap();
+                info!("answer#{}: domain={} rdata={}", i, answer.name(), rdata);
             }
             true
         }));

@@ -1,4 +1,3 @@
-use std::convert::Infallible;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use async_trait::async_trait;
@@ -87,7 +86,7 @@ impl FilterFactory for NoopFilterFactory {
 }
 
 impl TryFrom<&Options> for NoopFilterFactory {
-    type Error = Infallible;
+    type Error = anyhow::Error;
 
     fn try_from(value: &Options) -> Result<Self, Self::Error> {
         Ok(NoopFilterFactory)
