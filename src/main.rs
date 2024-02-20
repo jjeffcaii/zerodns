@@ -18,7 +18,6 @@ extern crate log;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use bytes::BytesMut;
 use clap::{Parser, Subcommand};
 use tokio::join;
 use tokio::net::{TcpListener, UdpSocket};
@@ -102,7 +101,6 @@ async fn main() -> Result<()> {
                 UdpServer::new(
                     socket,
                     Clone::clone(&h),
-                    BytesMut::with_capacity(buffsize),
                     Clone::clone(&cs),
                     Clone::clone(&closer),
                 )

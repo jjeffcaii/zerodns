@@ -3,7 +3,6 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use maxminddb::Reader;
-use smallvec::SmallVec;
 
 use crate::filter::misc::OptionsReader;
 use crate::protocol::{Kind, Message, RData, DNS};
@@ -86,21 +85,21 @@ impl Filter for ChinaDNSFilter {
             });
         }
 
-        let mut domain = SmallVec::<[u8; 64]>::new();
-        for (i, b) in req.questions().next().unwrap().name().enumerate() {
-            if i != 0 {
-                domain.push(b'.');
-            }
-            domain.extend_from_slice(b);
-        }
+        // let mut domain = SmallVec::<[u8; 64]>::new();
+        // for (i, b) in req.questions().next().unwrap().name().enumerate() {
+        //     if i != 0 {
+        //         domain.push(b'.');
+        //     }
+        //     domain.extend_from_slice(b);
+        // }
 
         match rx.recv().await {
             Some((china, msg)) => {
-                info!(
-                    "{}: oversea={}",
-                    String::from_utf8_lossy(&domain[..]),
-                    !china
-                );
+                // info!(
+                //     "{}: oversea={}",
+                //     String::from_utf8_lossy(&domain[..]),
+                //     !china
+                // );
                 Ok(Some(msg))
             }
             None => Ok(None),

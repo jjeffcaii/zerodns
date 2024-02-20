@@ -1,12 +1,40 @@
-use std::fmt::{Display, Formatter};
-use std::net::Ipv4Addr;
+use std::fmt::{Debug, Display, Formatter};
+use std::net::{Ipv4Addr, Ipv6Addr};
 
+use ahash::HashMap;
 use byteorder::{BigEndian, ByteOrder};
 use bytes::{BufMut, Bytes, BytesMut};
 use once_cell::sync::Lazy;
 use regex::Regex;
+use strum::IntoEnumIterator;
+use strum_macros::EnumIter;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+macro_rules! parse_u16 {
+    ($name:ident) => {
+        impl $name {
+            pub fn parse_u16(code: u16) -> Option<$name> {
+                static IDX: Lazy<HashMap<u16, $name>> = Lazy::new(|| {
+                    let mut m = HashMap::with_capacity_and_hasher(
+                        $name::iter().len(),
+                        ahash::RandomState::default(),
+                    );
+                    $name::iter().for_each(|next| {
+                        m.insert(next as u16, next);
+                    });
+                    m
+                });
+                IDX.get(&code).cloned()
+            }
+        }
+    };
+}
+
+parse_u16!(RCode);
+parse_u16!(Class);
+parse_u16!(OpCode);
+parse_u16!(Kind);
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, EnumIter, Hash)]
 pub enum RCode {
     NoError = 0,
     FormatError = 1,
@@ -21,91 +49,115 @@ pub enum RCode {
     NotZone = 10,
 }
 
+/// dns record types, see also https://en.wikipedia.org/wiki/List_of_DNS_record_types
 #[allow(clippy::upper_case_acronyms)]
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, EnumIter, Hash)]
 pub enum Kind {
-    /// a host address
+    /// RFC 1035, Address record
     A = 1,
-    /// an authoritative name handler
-    NS = 2,
-    /// a mail destination
-    MD = 3,
-    /// a mail forwarder
-    MF = 4,
-    /// the canonical name for an alias
-    CNAME = 5,
-    /// a marks the start of a zone of authority
-    SOA = 6,
-    /// a mailbox domain name
-    MB = 7,
-    /// a mail group member
-    MG = 8,
-    /// a mail rename domain name
-    MR = 9,
-    /// a null RR
-    NULL = 10,
-    /// a well known service description
-    WKS = 11,
-    /// a domain name pointer
-    PTR = 12,
-    /// host information
-    HINFO = 13,
-
-    /// mailbox or mail list information
-    MINFO = 14,
-    /// mail exchange
-    MX = 15,
-    /// text strings
-    TXT = 16,
-    /// service and protocol
-    SRV = 33,
-
+    /// RFC 3596, IPv6 address record
     AAAA = 28,
-
-    IXFR = 251,
-
-    /// A request for a transfer of an entire zone
-    AXFR = 252,
-    /// A request for mailbox-related records (MB, MG or MR)
-    MAILB = 253,
-    /// A request for mail agent RRs
-    MAILA = 254,
-    /// A request for all records
+    /// RFC 1183, AFS database record
+    AFSDB = 18,
+    /// RFC 3123, Address Prefix List
+    APL = 42,
+    /// RFC 6844, Certification Authority Authorization
+    CAA = 257,
+    /// RFC 7344, Child copy of DNSKEY record, for transfer to parent
+    CDNSKEY = 60,
+    /// RFC 7344, Child DS
+    CDS = 59,
+    /// RFC 4398, Certificate record
+    CERT = 37,
+    /// RFC 1035, Canonical name record
+    CNAME = 5,
+    /// RFC 7477, Child-to-Parent Synchronization
+    CSYNC = 62,
+    /// RFC 4701, DHCP identifier
+    DHCID = 49,
+    /// RFC 4431, DNSSEC Lookaside Validation record
+    DLV = 32769,
+    /// RFC 6672, Delegation name record
+    DNAME = 39,
+    /// RFC 4034, DNS Key record
+    DNSKEY = 48,
+    /// RFC 4034, Delegation signer
+    DS = 43,
+    /// RFC 7043, MAC address (EUI-48)
+    EUI48 = 108,
+    /// RFC 7043, MAC address (EUI-64)
+    EUI64 = 109,
+    /// RFC 8482, Host Information
+    HINFO = 13,
+    /// RFC 8005, Host Identity Protocol
+    HIP = 55,
+    /// RFC 9460, HTTPS Binding
+    HTTPS = 65,
+    /// RFC 4025, IPsec Key
+    IPSECKEY = 45,
+    /// RFC 2535 and RFC 2930, Key record
+    KEY = 25,
+    /// RFC 2230, Key Exchanger record
+    KX = 36,
+    /// RFC 1876, Location record
+    LOC = 29,
+    /// RFC 1035 and RFC 7505, Mail exchange record
+    MX = 15,
+    /// RFC 3403, Naming Authority Pointer
+    NAPTR = 35,
+    /// RFC 1035, Name server record
+    NS = 2,
+    /// RFC 4034, Next Secure record
+    NSEC = 47,
+    /// RFC 5155, Next Secure record version 3
+    NSEC3 = 50,
+    /// RFC 5155, NSEC3 parameters
+    NSEC3PARAM = 51,
+    /// RFC 7929, OpenPGP public key record
+    OPENPGPKEY = 61,
+    /// RFC 1035, PTR Resource Record
+    PTR = 12,
+    /// RFC 4034, DNSSEC signature
+    RRSIG = 46,
+    /// RFC 1183, Responsible Person
+    RP = 17,
+    /// RFC 2535, Signature
+    SIG = 24,
+    /// RFC 8162, S/MIME cert association
+    SMIMEA = 53,
+    /// RFC 1035 and RFC 2308, Start of [a zone of] authority record
+    SOA = 6,
+    /// RFC 2782, Service locator
+    SRV = 33,
+    /// RFC 4255, SSH Public Key Fingerprint
+    SSHFP = 44,
+    /// RFC 9460, Service Binding
+    SVCB = 64,
+    /// DNSSEC Trust Authorities
+    TA = 32768,
+    /// RFC 2930, Transaction Key record
+    TKEY = 249,
+    /// RFC 6698, TLSA certificate association
+    TLSA = 52,
+    /// RFC 2845, Transaction Signature
+    TSIG = 250,
+    /// RFC 1035, Text record
+    TXT = 16,
+    /// RFC 7553, Uniform Resource Identifier
+    URI = 256,
+    /// RFC 8976, Message Digests for DNS Zones
+    ZONEMD = 63,
+    /// RFC 1035, All cached records
     ANY = 255,
+    /// RFC 1035, Authoritative Zone Transfer
+    AXFR = 252,
+    /// RFC 1996, Incremental Zone Transfer
+    IXFR = 251,
+    /// RFC 6891, Option, This is a pseudo-record type needed to support EDNS.
+    OPT = 41,
 }
 
-impl Kind {
-    pub fn parse_u16(code: u16) -> Option<Self> {
-        match code {
-            1 => Some(Self::A),
-            2 => Some(Self::NS),
-            3 => Some(Self::MD),
-            4 => Some(Self::MF),
-            5 => Some(Self::CNAME),
-            6 => Some(Self::SOA),
-            7 => Some(Self::MB),
-            8 => Some(Self::MG),
-            9 => Some(Self::MR),
-            10 => Some(Self::NULL),
-            11 => Some(Self::WKS),
-            12 => Some(Self::PTR),
-            13 => Some(Self::HINFO),
-            14 => Some(Self::MINFO),
-            15 => Some(Self::MX),
-            16 => Some(Self::TXT),
-            33 => Some(Self::SRV),
-            28 => Some(Self::AAAA),
-            251 => Some(Self::IXFR),
-            252 => Some(Self::AXFR),
-            253 => Some(Self::MAILB),
-            254 => Some(Self::MAILA),
-            255 => Some(Self::ANY),
-            _ => None,
-        }
-    }
-}
-
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, EnumIter, Hash)]
 pub enum Class {
     /// the Internet
     IN = 1,
@@ -117,19 +169,7 @@ pub enum Class {
     HS = 4,
 }
 
-impl Class {
-    pub fn parse_u16(code: u16) -> Option<Self> {
-        match code {
-            1 => Some(Self::IN),
-            2 => Some(Self::CS),
-            3 => Some(Self::CH),
-            4 => Some(Self::HS),
-            _ => None,
-        }
-    }
-}
-
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, EnumIter, Hash)]
 pub enum OpCode {
     StandardQuery = 0,
     InverseQuery = 1,
@@ -224,15 +264,7 @@ impl Flags {
     }
 
     pub fn opcode(&self) -> OpCode {
-        match (self.0 >> 11) & 0x000f {
-            0 => OpCode::StandardQuery,
-            1 => OpCode::InverseQuery,
-            2 => OpCode::Status,
-            3 => OpCode::Reserved,
-            4 => OpCode::Notify,
-            5 => OpCode::Update,
-            _ => unreachable!(),
-        }
+        OpCode::parse_u16((self.0 >> 11) & 0x000f).expect("Invalid Opcode!")
     }
 
     pub fn is_authoritative(&self) -> bool {
@@ -492,6 +524,12 @@ impl From<Vec<u8>> for Message {
     }
 }
 
+impl Into<Bytes> for Message {
+    fn into(self) -> Bytes {
+        self.0.freeze()
+    }
+}
+
 struct QuestionIter<'a> {
     raw: &'a [u8],
     offset: usize,
@@ -529,22 +567,18 @@ impl Question<'_> {
         self.name().len() + 4
     }
 
-    #[inline]
     pub fn name(&self) -> Notation<'_> {
-        Notation {
-            raw: self.raw,
-            pos: self.offset,
-        }
+        Notation::new(self.raw, self.offset)
     }
 
     pub fn kind(&self) -> Kind {
         let n = self.offset + self.name().len();
-        Kind::parse_u16(BigEndian::read_u16(&self.raw[n..])).unwrap()
+        Kind::parse_u16(BigEndian::read_u16(&self.raw[n..])).expect("Invalid question type!")
     }
 
     pub fn class(&self) -> Class {
         let n = self.offset + self.name().len() + 2;
-        Class::parse_u16(BigEndian::read_u16(&self.raw[n..])).unwrap()
+        Class::parse_u16(BigEndian::read_u16(&self.raw[n..])).expect("Invalid question class!")
     }
 }
 
@@ -583,21 +617,19 @@ pub struct RR<'a> {
 
 impl RR<'_> {
     pub fn name(&self) -> Notation<'_> {
-        Notation {
-            raw: self.raw,
-            pos: self.offset,
-        }
+        Notation::new(self.raw, self.offset)
     }
 
     pub fn kind(&self) -> Kind {
         let offset = self.offset + self.name().len();
-        Kind::parse_u16(BigEndian::read_u16(&self.raw[offset..])).unwrap()
+        let code = BigEndian::read_u16(&self.raw[offset..]);
+        Kind::parse_u16(code).expect("Invalid RR type!")
     }
 
     pub fn class(&self) -> Class {
         let offset = self.offset + self.name().len() + 2;
         let n = BigEndian::read_u16(&self.raw[offset..]);
-        Class::parse_u16(n).unwrap()
+        Class::parse_u16(n).expect("Invalid RR class!")
     }
 
     pub fn time_to_live(&self) -> u32 {
@@ -623,6 +655,15 @@ impl RR<'_> {
                     );
                 }
                 RData::A(A(&self.raw[offset..offset + size]))
+            }
+            Kind::AAAA => {
+                if size != 16 {
+                    bail!(
+                        "invalid RR format: size of type(AAAA) should be 16, actual is {}",
+                        size
+                    );
+                }
+                RData::AAAA(AAAA(&self.raw[offset..offset + size]))
             }
             Kind::CNAME => RData::CNAME(CNAME {
                 raw: &self.raw[..offset + size],
@@ -663,15 +704,34 @@ impl RR<'_> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Notation<'a> {
     raw: &'a [u8],
-    pos: usize,
+    offset: usize,
+    cur: usize,
+}
+
+impl<'a> Notation<'a> {
+    fn new(raw: &'a [u8], offset: usize) -> Self {
+        Self {
+            raw,
+            offset,
+            cur: offset,
+        }
+    }
 }
 
 impl Notation<'_> {
     pub fn len(&self) -> usize {
-        let mut offset = self.pos;
+        let mut offset = self.offset;
         let mut n = 0usize;
 
         loop {
+            if offset >= self.raw.len() {
+                error!(
+                    "overflow: raw={}, offset={}, current={}",
+                    hex::encode(self.raw),
+                    self.offset,
+                    offset
+                );
+            }
             let first = self.raw[offset];
             if first & 0xc0 == 0xc0 {
                 n += 2;
@@ -690,8 +750,12 @@ impl Notation<'_> {
 }
 
 impl Display for Notation<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut notation = Clone::clone(self);
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let mut notation = Self {
+            raw: self.raw,
+            offset: self.offset,
+            cur: self.offset,
+        };
         match notation.next() {
             None => Ok(()),
             Some(first) => {
@@ -709,27 +773,27 @@ impl<'a> Iterator for Notation<'a> {
     type Item = &'a [u8];
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.pos == usize::MAX {
+        if self.cur == usize::MAX {
             return None;
         }
-        let first = self.raw[self.pos];
+        let first = self.raw[self.cur];
 
         if first & 0xc0 == 0xc0 {
             // 1. compression pointer
-            let pos = BigEndian::read_u16(&self.raw[self.pos..]) & 0x3f;
-            self.pos = pos as usize;
+            let pos = BigEndian::read_u16(&self.raw[self.cur..]) & !0xc000;
+            self.cur = pos as usize;
             self.next()
         } else {
             // 2. length-based
             let size = first as usize;
 
             if size == 0 {
-                self.pos = usize::MAX;
+                self.cur = usize::MAX;
                 return None;
             }
-            let offset = self.pos + 1;
-            self.pos = offset + size;
-            let b = &self.raw[offset..self.pos];
+            let offset = self.cur + 1;
+            self.cur = offset + size;
+            let b = &self.raw[offset..self.cur];
             Some(b)
         }
     }
@@ -739,6 +803,7 @@ impl<'a> Iterator for Notation<'a> {
 #[derive(Debug)]
 pub enum RData<'a> {
     A(A<'a>),
+    AAAA(AAAA<'a>),
     CNAME(CNAME<'a>),
     MX(MX<'a>),
     SOA(SOA<'a>),
@@ -749,12 +814,13 @@ pub enum RData<'a> {
 impl<'a> Display for RData<'a> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            RData::A(a) => write!(f, "RData({})", a),
-            RData::CNAME(it) => write!(f, "RData({})", it),
-            RData::MX(it) => write!(f, "RData({})", it),
-            RData::SOA(it) => write!(f, "RData({})", it),
-            RData::PTR(it) => write!(f, "RData({})", it),
-            RData::UNKNOWN(b) => write!(f, "RData(UNKNOWN {:?})", b),
+            RData::A(it) => write!(f, "{}", it),
+            RData::CNAME(it) => write!(f, "{}", it),
+            RData::MX(it) => write!(f, "{}", it),
+            RData::SOA(it) => write!(f, "{}", it),
+            RData::PTR(it) => write!(f, "{}", it),
+            RData::AAAA(it) => write!(f, "{}", it),
+            RData::UNKNOWN(it) => write!(f, "UNKNOWN({:?})", it),
         }
     }
 }
@@ -771,11 +837,32 @@ impl A<'_> {
 
 impl<'a> Display for A<'a> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "A {}.{}.{}.{}",
-            self.0[0], self.0[1], self.0[2], self.0[3]
+        write!(f, "{}", self.ipaddr())
+    }
+}
+
+#[allow(clippy::upper_case_acronyms)]
+#[derive(Debug)]
+pub struct AAAA<'a>(&'a [u8]);
+
+impl AAAA<'_> {
+    pub fn ipaddr(&self) -> Ipv6Addr {
+        Ipv6Addr::new(
+            BigEndian::read_u16(self.0),
+            BigEndian::read_u16(&self.0[2..]),
+            BigEndian::read_u16(&self.0[4..]),
+            BigEndian::read_u16(&self.0[6..]),
+            BigEndian::read_u16(&self.0[8..]),
+            BigEndian::read_u16(&self.0[10..]),
+            BigEndian::read_u16(&self.0[12..]),
+            BigEndian::read_u16(&self.0[14..]),
         )
+    }
+}
+
+impl<'a> Display for AAAA<'a> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.ipaddr())
     }
 }
 
@@ -797,16 +884,13 @@ impl MX<'_> {
     }
 
     pub fn mail_exchange(&self) -> Notation<'_> {
-        Notation {
-            raw: &self.raw[..self.offset + self.size],
-            pos: 2 + self.offset,
-        }
+        Notation::new(&self.raw[..self.offset + self.size], 2 + self.offset)
     }
 }
 
 impl<'a> Display for MX<'a> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "MX {} {}", self.preference(), self.mail_exchange())
+        write!(f, "{} {}", self.preference(), self.mail_exchange())
     }
 }
 
@@ -820,16 +904,13 @@ pub struct PTR<'a> {
 
 impl PTR<'_> {
     pub fn domain_name(&self) -> Notation<'_> {
-        Notation {
-            raw: self.raw,
-            pos: self.offset,
-        }
+        Notation::new(self.raw, self.offset)
     }
 }
 
 impl Display for PTR<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "PTR {}", self.domain_name())
+        write!(f, "{}", self.domain_name())
     }
 }
 
@@ -847,16 +928,13 @@ impl CNAME<'_> {
     }
 
     pub fn cname(&self) -> Notation<'_> {
-        Notation {
-            raw: &self.raw[..self.offset + self.size],
-            pos: self.offset,
-        }
+        Notation::new(self.raw, self.offset)
     }
 }
 
 impl<'a> Display for CNAME<'a> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "CNAME {}", self.cname())
+        write!(f, "{}", self.cname())
     }
 }
 
@@ -874,17 +952,11 @@ impl SOA<'_> {
     }
 
     pub fn primary_nameserver(&self) -> Notation<'_> {
-        Notation {
-            raw: self.raw,
-            pos: self.offset,
-        }
+        Notation::new(self.raw, self.offset)
     }
 
     pub fn responsible_authority_mailbox(&self) -> Notation<'_> {
-        Notation {
-            raw: self.raw,
-            pos: self.offset + self.primary_nameserver().len(),
-        }
+        Notation::new(self.raw, self.offset + self.primary_nameserver().len())
     }
 
     pub fn serial_number(&self) -> u32 {
@@ -931,7 +1003,7 @@ impl<'a> Display for SOA<'a> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "SOA {} {} {} {} {} {} {}",
+            "{} {} {} {} {} {} {}",
             self.primary_nameserver(),
             self.responsible_authority_mailbox(),
             self.serial_number(),
@@ -1013,10 +1085,7 @@ mod tests {
         let raw = hex::decode("e7ad81800001000e000000010377777707796f757475626503636f6d0000010001c00c00050001000000ab00160a796f75747562652d7569016c06676f6f676c65c018c02d00010001000000ad00048efa442ec02d00010001000000ad00048efa48eec02d00010001000000ad00048efabceec02d00010001000000ad00048efa488ec02d00010001000000ad00048efa48aec02d00010001000000ad00048efab00ec02d00010001000000ad00048efabd0ec02d00010001000000ad00048efad98ec02d00010001000000ad00048efb282ec02d00010001000000ad00048efa440ec02d00010001000000ad0004acd90c8ec02d00010001000000ad0004acd90e4ec02d00010001000000ad00048efa446e0000290200000000000000").unwrap();
 
         let offset = 113 - 68;
-        let notation = Notation {
-            raw: &raw[..],
-            pos: offset,
-        };
+        let notation = Notation::new(&raw[..], offset);
 
         assert_eq!(22, notation.len());
 
@@ -1212,5 +1281,47 @@ mod tests {
         assert!(!flags.is_message_truncated());
         assert_eq!(0, flags.reserved());
         assert_eq!(RCode::NoError, flags.response_code());
+    }
+
+    #[test]
+    fn test_broken() {
+        init();
+
+        let msg = {
+            // let raw = hex::decode("d3138180000100020000000107696f73686f73740671746c63646e03636f6d0000010001c00c00010001000000140004b65bffd5c00c00010001000000140004705a287c0000290200000000000000").unwrap();
+            let s = "abe6818000010003000000000770616e63616b65056170706c6503636f6d0000410001c00c000500010000000100220770616e63616b650963646e2d6170706c6503636f6d06616b61646e73036e657400c02f000500010000000100140770616e63616b650167076161706c696d67c01ac05d0041000100000001002a0001008000002368747470733a2f2f646f682e646e732e6170706c652e636f6d2f646e732d7175657279";
+            let raw = hex::decode(s).unwrap();
+            Message::from(raw)
+        };
+
+        let flags = msg.flags();
+        info!("id: {}", msg.id());
+        info!("is_response: {}", flags.is_response());
+        info!("is_truncated: {}", flags.is_message_truncated());
+        info!("is_recursive_query: {}", flags.is_recursive_query());
+        info!("opcode: {:?}", flags.opcode());
+        info!("questions_num: {}", msg.question_count());
+        info!("answers_num: {}", msg.answer_count());
+
+        for (i, question) in msg.questions().enumerate() {
+            let name = question.name();
+            info!("question#{}: name={}({}B)", i, name, name.len());
+        }
+
+        for (i, answer) in msg.answers().enumerate() {
+            let name = answer.name();
+            let rdata = answer.rdata().unwrap();
+            let kind = answer.kind();
+
+            info!(
+                "answer#{}({}B): name={}({}B) kind={:?} rdata={}",
+                i,
+                answer.len(),
+                name,
+                name.len(),
+                kind,
+                rdata
+            );
+        }
     }
 }

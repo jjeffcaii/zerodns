@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -111,12 +112,21 @@ impl RuledHandler {
 
     fn get_rule(&self, req: &Message) -> Option<&Rule> {
         let mut v = SmallVec::<[u8; 64]>::new();
-        for (i, next) in req.questions().next().unwrap().name().enumerate() {
-            if i != 0 {
-                v.push(b'.');
+
+        use std::panic::{self, AssertUnwindSafe};
+
+        if let Err(e) = panic::catch_unwind(AssertUnwindSafe(|| {
+            for (i, next) in req.questions().next().unwrap().name().enumerate() {
+                if i != 0 {
+                    v.push(b'.');
+                }
+                v.extend_from_slice(next);
             }
-            v.extend_from_slice(next);
+        })) {
+            error!("fuck: {:?}", e);
+            error!("fuck222: {}", hex::encode(req.as_ref()));
         }
+
         let domain = unsafe { std::str::from_utf8_unchecked(&v[..]) };
 
         self.rules.iter().find(|r| r.is_match(domain))

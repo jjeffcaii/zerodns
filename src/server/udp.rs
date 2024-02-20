@@ -1,9 +1,11 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use bytes::BytesMut;
+use futures::StreamExt;
 use tokio::net::UdpSocket;
 use tokio::sync::Notify;
+use tokio_util::codec::BytesCodec;
+use tokio_util::udp::UdpFramed;
 
 use crate::cache::CacheStore;
 use crate::handler::Handler;
@@ -13,7 +15,6 @@ use crate::Result;
 pub struct UdpServer<H> {
     h: H,
     socket: UdpSocket,
-    buf: BytesMut,
     cache: Option<CacheStore>,
     closer: Arc<Notify>,
 }
@@ -22,14 +23,12 @@ impl<H> UdpServer<H> {
     pub fn new(
         socket: UdpSocket,
         handler: H,
-        buf: BytesMut,
         cache: Option<CacheStore>,
         closer: Arc<Notify>,
     ) -> Self {
         Self {
             h: handler,
             socket,
-            buf,
             cache,
             closer,
         }
@@ -40,11 +39,46 @@ impl<H> UdpServer<H>
 where
     H: Handler,
 {
+    #[inline]
+    async fn handle(mut req: Message, h: Arc<H>, cache: Option<CacheStore>) -> Result<Message> {
+        if let Some(cache) = &cache {
+            let id = req.id();
+            req.set_id(0);
+
+            if let Some((expired_at, mut exist)) = cache.get(&req).await {
+                let ttl = expired_at - Instant::now();
+                if ttl > Duration::ZERO {
+                    exist.set_id(id);
+
+                    debug!("use cache: ttl={:?}", ttl);
+
+                    return Ok(exist);
+                }
+            }
+
+            req.set_id(id);
+        }
+
+        let res = h.handle(&mut req).await?;
+
+        let msg = res.expect("no record resolved");
+
+        if let Some(cache) = &cache {
+            let id = req.id();
+            req.set_id(0);
+            cache.set(&req, &msg).await;
+            req.set_id(id);
+
+            debug!("set dns cache ok");
+        }
+
+        Ok(msg)
+    }
+
     pub async fn listen(self) -> Result<()> {
         let Self {
             h,
             socket,
-            mut buf,
             cache,
             closer,
         } = self;
@@ -54,63 +88,56 @@ where
         let h = Arc::new(h);
         let socket = Arc::new(socket);
 
+        let mut framed = UdpFramed::new(Clone::clone(&socket), BytesCodec::new());
+
         loop {
-            let socket = Clone::clone(&socket);
             tokio::select! {
-                recv = socket.recv_buf_from(&mut buf) => {
-                    let (n,peer) = recv?;
-                    let b = buf.split_to(n);
-                    let h = Clone::clone(&h);
-                    let cache = Clone::clone(&cache);
+                recv = framed.next() => {
+                    match recv{
+                        Some(Ok((b,peer))) => {
+                            let req = Message::from(b);
+                            let h = Clone::clone(&h);
+                            let cache = Clone::clone(&cache);
+                            let socket = Clone::clone(&socket);
 
-                    tokio::spawn(async move {
-                        let mut req = Message::from(b);
+                            if req.question_count() > 0 {
+                                for next in req.questions() {
+                                    info!("0x{:04x} > {}.\t{:?}\t{:?}", req.id(), next.name(), next.class(), next.kind());
+                                }
+                            }
 
-                        if let Some(cache) = &cache {
-                            let id = req.id();
-                            req.set_id(0);
-
-                            if let Some((expired_at, mut exist)) = cache.get(&req).await {
-                                let ttl = expired_at - Instant::now();
-                                if ttl > Duration::ZERO {
-                                    exist.set_id(id);
-
-                                    debug!("use cache: ttl={:?}", ttl);
-
-                                    if let Err(e) = socket.send_to(exist.as_ref(), peer).await {
-                                        error!("failed to reply response: {:?}", e);
+                            tokio::spawn(async move {
+                                match Self::handle(req, h, cache).await {
+                                    Ok(res) => {
+                                        if res.answer_count() > 0 {
+                                            for next in res.answers() {
+                                                if let Ok(rdata) = next.rdata(){
+                                                    info!(
+                                                        "0x{:04x} < {}.\t{}\t{:?}\t{:?}\t{}",
+                                                        res.id(),
+                                                        next.name(),
+                                                        next.time_to_live(),
+                                                        next.class(),
+                                                        next.kind(),
+                                                        rdata,
+                                                    );
+                                                }
+                                            }
+                                        }
+                                        if let Err(e) = socket.send_to(res.as_ref(), peer).await {
+                                            error!("failed to reply dns response: {:?}", e);
+                                        }
                                     }
-
-                                    return;
+                                    Err(e) => {
+                                        error!("failed to handle dns request: {:?}", e);
+                                    }
                                 }
-                            }
-
-                            req.set_id(id);
+                            });
                         }
-
-                        match h.handle(&mut req).await {
-                            Ok(res) => {
-                                let msg = res.expect("no record resolved");
-
-                                if let Some(cache) = &cache {
-                                    let id = req.id();
-                                    req.set_id(0);
-                                    cache.set(&req, &msg).await;
-                                    req.set_id(id);
-
-                                    debug!("set dns cache ok");
-                                }
-
-                                // TODO: handle no result
-                                if let Err(e) = socket.send_to(msg.as_ref(), peer).await {
-                                    error!("failed to reply response: {:?}", e);
-                                }
-                            }
-                            Err(e) => {
-                                error!("failed to handle request: {:?}", e);
-                            }
+                        _ => {
+                            break;
                         }
-                    });
+                    }
                 }
                 () = closer.notified() => {
                     info!("close signal is received, udp dns server is stopping...");
@@ -156,14 +183,14 @@ mod tests {
 
         let req = {
             let raw = hex::decode(
-                "f2500120000100000000000105626169647503636f6d00000100010000291000000000000000",
+                "abe6010000010000000000000770616e63616b65056170706c6503636f6d0000410001",
             )
             .unwrap();
             Message::from(raw)
         };
 
         let res = {
-            let raw = hex::decode("f2508180000100020000000105626169647503636f6d0000010001c00c00010001000000b70004279c420ac00c00010001000000b700046ef244420000290580000000000000").unwrap();
+            let raw = hex::decode("abe6818000010003000000000770616e63616b65056170706c6503636f6d0000410001c00c000500010000000100220770616e63616b650963646e2d6170706c6503636f6d06616b61646e73036e657400c02f000500010000000100140770616e63616b650167076161706c696d67c01ac05d0041000100000001002a0001008000002368747470733a2f2f646f682e646e732e6170706c652e636f6d2f646e732d7175657279").unwrap();
             Message::from(raw)
         };
 
@@ -175,17 +202,11 @@ mod tests {
         };
 
         let cs = CacheStore::builder().build();
-        let socket = UdpSocket::bind("127.0.0.1:0").await?;
+        let socket = UdpSocket::bind("127.0.0.1:5454").await?;
         let port = socket.local_addr().unwrap().port();
         let closer = Arc::new(Notify::new());
 
-        let server = UdpServer::new(
-            socket,
-            h,
-            BytesMut::with_capacity(4096),
-            Some(cs),
-            Clone::clone(&closer),
-        );
+        let server = UdpServer::new(socket, h, Some(cs), Clone::clone(&closer));
 
         tokio::spawn(async move {
             server.listen().await.expect("udp server is stopped!");

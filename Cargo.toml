@@ -39,6 +39,9 @@ maxminddb = "0.24.0"
 moka = { version = "0.12", features = ["future", "sync"] }
 url = "2.5.0"
 regex = "1.10.3"
+hex = "0.4.3"
+strum = { version = "0.26.1", default-features = false, features = ["strum_macros", "derive"] }
+strum_macros = "0.26.1"
 
 [dev-dependencies]
 hex = "0.4.3"

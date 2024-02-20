@@ -24,7 +24,7 @@ pub enum DNS {
 
 impl DNS {
     pub async fn request(&self, req: &Message) -> Result<Message> {
-        match self {
+        let resp = match self {
             DNS::UDP(addr) => {
                 let mut b = BytesMut::with_capacity(4096);
                 Self::request_udp(addr, req, &mut b).await
@@ -33,7 +33,14 @@ impl DNS {
             _ => {
                 todo!()
             }
+        };
+
+        if let Ok(res) = &resp {
+            debug!("0x{:x} >>>: {}", req.id(), hex::encode(req.as_ref()));
+            debug!("0x{:x} <<<: {}", res.id(), hex::encode(res.as_ref()));
         }
+
+        resp
     }
 
     #[inline]
