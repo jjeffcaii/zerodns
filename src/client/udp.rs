@@ -32,7 +32,7 @@ impl UdpClient {
 #[async_trait]
 impl Client for UdpClient {
     async fn request(&self, req: &Message) -> Result<Option<Message>> {
-        let socket = UdpSocket::bind("127.0.0.1:0").await?;
+        let socket = UdpSocket::bind("0.0.0.0:0").await?;
 
         let mut framed = UdpFramed::new(socket, BytesCodec::default());
 
