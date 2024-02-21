@@ -3,7 +3,7 @@ use crate::filter::{
     ProxyByFilterFactory,
 };
 
-pub(crate) fn init() {
+pub fn init() {
     register("noop", |opts: &Options| NoopFilterFactory::try_from(opts));
     register("proxyby", |opts: &Options| {
         ProxyByFilterFactory::try_from(opts)
@@ -16,8 +16,9 @@ pub(crate) fn init() {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::filter::{load, Options};
+
+    use super::*;
 
     #[test]
     fn test_init() {

@@ -12,20 +12,15 @@ use crate::handler::Handler;
 use crate::protocol::Message;
 use crate::Result;
 
-pub struct UdpServer<H> {
+pub struct UdpServer<H, C> {
     h: H,
     socket: UdpSocket,
-    cache: Option<CacheStore>,
+    cache: Option<Arc<C>>,
     closer: Arc<Notify>,
 }
 
-impl<H> UdpServer<H> {
-    pub fn new(
-        socket: UdpSocket,
-        handler: H,
-        cache: Option<CacheStore>,
-        closer: Arc<Notify>,
-    ) -> Self {
+impl<H, C> UdpServer<H, C> {
+    pub fn new(socket: UdpSocket, handler: H, cache: Option<Arc<C>>, closer: Arc<Notify>) -> Self {
         Self {
             h: handler,
             socket,
@@ -35,13 +30,14 @@ impl<H> UdpServer<H> {
     }
 }
 
-impl<H> UdpServer<H>
+impl<H, C> UdpServer<H, C>
 where
     H: Handler,
+    C: CacheStore,
 {
     #[inline]
-    async fn handle(mut req: Message, h: Arc<H>, cache: Option<CacheStore>) -> Result<Message> {
-        if let Some(cache) = &cache {
+    async fn handle(mut req: Message, h: Arc<H>, cache: Option<Arc<C>>) -> Result<Message> {
+        if let Some(cache) = cache.as_deref() {
             let id = req.id();
             req.set_id(0);
 
@@ -152,6 +148,7 @@ where
 
 #[cfg(test)]
 mod tests {
+    use crate::cache::InMemoryCache;
     use std::str::FromStr;
     use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -201,7 +198,7 @@ mod tests {
             resp: Clone::clone(&res),
         };
 
-        let cs = CacheStore::builder().build();
+        let cs = Arc::new(InMemoryCache::builder().build());
         let socket = UdpSocket::bind("127.0.0.1:5454").await?;
         let port = socket.local_addr().unwrap().port();
         let closer = Arc::new(Notify::new());

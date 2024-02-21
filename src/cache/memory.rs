@@ -1,29 +1,34 @@
+use super::CacheStore;
 use std::ops::Add;
 use std::time::{Duration, Instant};
 
+use async_trait::async_trait;
 use moka::future::Cache;
 
 use crate::protocol::Message;
 
 #[derive(Clone)]
-pub(crate) struct CacheStore {
+pub(crate) struct InMemoryCache {
     ttl: Duration,
     cache: Cache<Message, (Instant, Message)>,
 }
 
-impl CacheStore {
+impl InMemoryCache {
     pub(crate) fn builder() -> CacheStoreBuilder {
         CacheStoreBuilder {
             ttl: Duration::from_secs(3600),
             capacity: 1000,
         }
     }
+}
 
-    pub(crate) async fn get(&self, req: &Message) -> Option<(Instant, Message)> {
+#[async_trait]
+impl CacheStore for InMemoryCache {
+    async fn get(&self, req: &Message) -> Option<(Instant, Message)> {
         self.cache.get(req).await
     }
 
-    pub(crate) async fn set(&self, req: &Message, resp: &Message) {
+    async fn set(&self, req: &Message, resp: &Message) {
         let key = Clone::clone(req);
         let val = Clone::clone(resp);
 
@@ -54,18 +59,19 @@ impl CacheStoreBuilder {
         self
     }
 
-    pub(crate) fn build(self) -> CacheStore {
+    pub(crate) fn build(self) -> InMemoryCache {
         let Self { ttl, capacity } = self;
         let cache = Cache::builder().max_capacity(capacity as u64).build();
 
-        CacheStore { ttl, cache }
+        InMemoryCache { ttl, cache }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use tokio::time::{sleep, Duration};
+
+    use super::*;
 
     fn init() {
         pretty_env_logger::try_init_timed().ok();
@@ -88,7 +94,7 @@ mod tests {
             Message::from(raw)
         };
 
-        let cs = CacheStore::builder().ttl(2).capacity(100).build();
+        let cs = InMemoryCache::builder().ttl(2).capacity(100).build();
         assert!(cs.get(&req).await.is_none());
 
         cs.set(&req, &res).await;

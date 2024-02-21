@@ -432,6 +432,10 @@ impl Message {
         self.0.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     pub fn id(&self) -> u16 {
         BigEndian::read_u16(&self.0[..])
     }
@@ -567,6 +571,10 @@ impl Question<'_> {
         self.name().len() + 4
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     pub fn name(&self) -> Notation<'_> {
         Notation::new(self.raw, self.offset)
     }
@@ -694,6 +702,10 @@ impl RR<'_> {
         &self.raw[offset..offset + size]
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     pub fn len(&self) -> usize {
         let n = self.name().len();
         let size = BigEndian::read_u16(&self.raw[self.offset + n + 8..]) as usize;
@@ -719,6 +731,10 @@ impl<'a> Notation<'a> {
 }
 
 impl Notation<'_> {
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     pub fn len(&self) -> usize {
         let mut offset = self.offset;
         let mut n = 0usize;
@@ -879,6 +895,10 @@ impl MX<'_> {
         self.size
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     pub fn preference(&self) -> u16 {
         BigEndian::read_u16(&self.raw[self.offset..])
     }
@@ -927,6 +947,10 @@ impl CNAME<'_> {
         self.size
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     pub fn cname(&self) -> Notation<'_> {
         Notation::new(self.raw, self.offset)
     }
@@ -949,6 +973,10 @@ pub struct SOA<'a> {
 impl SOA<'_> {
     pub fn len(&self) -> usize {
         self.size
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 
     pub fn primary_nameserver(&self) -> Notation<'_> {

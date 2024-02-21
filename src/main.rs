@@ -1,17 +1,3 @@
-#![allow(dead_code)]
-// #![allow(unused_imports)]
-#![allow(unused_variables)]
-#![allow(unused_assignments)]
-#![allow(clippy::type_complexity)]
-#![allow(clippy::from_over_into)]
-#![allow(clippy::module_inception)]
-#![doc(test(
-    no_crate_inject,
-    attr(deny(warnings, rust_2018_idioms), allow(dead_code, unused_variables))
-))]
-
-#[macro_use]
-extern crate anyhow;
 #[macro_use]
 extern crate log;
 
@@ -19,22 +5,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
-use tokio::join;
-use tokio::net::{TcpListener, UdpSocket};
 use tokio::sync::Notify;
-
-use crate::handler::RuledHandler;
-use crate::server::{TcpServer, UdpServer};
-
-mod builtin;
-mod cache;
-mod config;
-mod filter;
-mod handler;
-mod protocol;
-mod server;
-
-pub type Result<T> = anyhow::Result<T>;
 
 #[derive(Parser)]
 #[command(name = "ZeroDNS")]
@@ -56,71 +27,25 @@ enum Commands {
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> anyhow::Result<()> {
     pretty_env_logger::try_init_timed().ok();
 
-    builtin::init();
+    zerodns::init();
 
     match Cli::parse().command {
         Commands::Run { config: path } => {
-            let c = config::read_from_toml(path)?;
+            let c = zerodns::config::read_from_toml(path)?;
 
-            let mut rb = RuledHandler::builder();
-
-            for (k, v) in c.filters.iter() {
-                rb = rb.filter(k, v)?;
-            }
-
-            for next in c.rules.iter() {
-                rb = rb.rule(next)?;
-            }
-
-            let h = rb.build();
             let closer = Arc::new(Notify::new());
-
-            let cs = match &c.server.cache_size {
-                None => None,
-                Some(size) => {
-                    if *size == 0 {
-                        None
-                    } else {
-                        Some(cache::CacheStore::builder().capacity(*size).build())
-                    }
-                }
-            };
-
-            let udp_server = {
-                let mut buffsize = c.server.buff_size.unwrap_or(4096);
-
-                if buffsize < 1024 {
-                    buffsize = 1024;
-                }
-
-                let socket = UdpSocket::bind(&c.server.listen).await?;
-
-                UdpServer::new(
-                    socket,
-                    Clone::clone(&h),
-                    Clone::clone(&cs),
-                    Clone::clone(&closer),
-                )
-            };
-
-            let tcp_server = {
-                TcpServer::new(
-                    TcpListener::bind(&c.server.listen).await?,
-                    Clone::clone(&h),
-                    Clone::clone(&cs),
-                    Clone::clone(&closer),
-                )
-            };
-
             let stopped = Arc::new(Notify::new());
 
             {
+                let closer = Clone::clone(&closer);
                 let stopped = Clone::clone(&stopped);
                 tokio::spawn(async move {
-                    let (_first, _second) = join!(udp_server.listen(), tcp_server.listen());
+                    if let Err(e) = zerodns::bootstrap::run(c, closer).await {
+                        error!("zerodns server is stopped: {:?}", e);
+                    }
                     stopped.notify_one();
                 });
             }
@@ -134,7 +59,7 @@ async fn main() -> Result<()> {
     }
 
     // RUN:
-    // dig +short @127.0.0.1 -p5454 google.com
+    // dig @127.0.0.1 -p5454 www.youtube.com
 
     Ok(())
 }

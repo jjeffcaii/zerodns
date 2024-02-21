@@ -14,7 +14,6 @@ pub struct Config {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServerConfig {
     pub listen: String,
-    pub buff_size: Option<usize>,
     pub cache_size: Option<usize>,
 }
 
@@ -31,7 +30,7 @@ pub struct Rule {
     pub filter: String,
 }
 
-pub(crate) fn read_from_toml(pt: PathBuf) -> anyhow::Result<Config> {
+pub fn read_from_toml(pt: PathBuf) -> anyhow::Result<Config> {
     let b = std::fs::read(pt)?;
     let s = String::from_utf8(b)?;
     let c: Config = toml::from_str(&s)?;

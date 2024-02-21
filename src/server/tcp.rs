@@ -12,20 +12,15 @@ use crate::handler::Handler;
 use crate::protocol::Codec;
 use crate::Result;
 
-pub struct TcpServer<H> {
+pub struct TcpServer<H, C> {
     h: H,
     listener: TcpListener,
-    cache: Option<CacheStore>,
+    cache: Option<Arc<C>>,
     closer: Arc<Notify>,
 }
 
-impl<H> TcpServer<H> {
-    pub fn new(
-        listener: TcpListener,
-        h: H,
-        cache: Option<CacheStore>,
-        closer: Arc<Notify>,
-    ) -> Self {
+impl<H, C> TcpServer<H, C> {
+    pub fn new(listener: TcpListener, h: H, cache: Option<Arc<C>>, closer: Arc<Notify>) -> Self {
         Self {
             h,
             listener,
@@ -35,9 +30,10 @@ impl<H> TcpServer<H> {
     }
 }
 
-impl<H> TcpServer<H>
+impl<H, C> TcpServer<H, C>
 where
     H: Handler,
+    C: CacheStore,
 {
     pub async fn listen(self) -> Result<()> {
         let Self {
@@ -76,7 +72,7 @@ where
         mut stream: TcpStream,
         addr: SocketAddr,
         handler: Arc<H>,
-        cache: Option<CacheStore>,
+        cache: Option<Arc<C>>,
     ) -> Result<()> {
         let (r, w) = stream.split();
         let mut r = FramedRead::with_capacity(r, Codec, 4096);
@@ -85,7 +81,7 @@ where
         while let Some(next) = r.next().await {
             let mut req = next?;
 
-            if let Some(cache) = &cache {
+            if let Some(cache) = cache.as_deref() {
                 let id = req.id();
                 req.set_id(0);
 
@@ -127,6 +123,7 @@ where
 
 #[cfg(test)]
 mod tests {
+    use crate::cache::InMemoryCache;
     use std::str::FromStr;
     use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -176,7 +173,7 @@ mod tests {
             resp: Clone::clone(&res),
         };
 
-        let cs = CacheStore::builder().build();
+        let cs = Arc::new(InMemoryCache::builder().build());
 
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let port = listener.local_addr().unwrap().port();

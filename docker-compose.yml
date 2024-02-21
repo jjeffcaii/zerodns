@@ -12,8 +12,8 @@ services:
       - ./GeoLite2-Country.mmdb:/app/GeoLite2-Country.mmdb
       - ./config.toml:/app/config.toml
     ports:
-      - 15454:5454/udp
-      - 15454:5454/tcp
+      - 5454:5454/udp
+      - 5454:5454/tcp
     networks:
       - local
 
