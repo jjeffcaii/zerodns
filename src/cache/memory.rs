@@ -1,24 +1,20 @@
-use super::CacheStore;
-use std::ops::Add;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use async_trait::async_trait;
 use moka::future::Cache;
 
 use crate::protocol::Message;
 
+use super::CacheStore;
+
 #[derive(Clone)]
 pub(crate) struct InMemoryCache {
-    ttl: Duration,
     cache: Cache<Message, (Instant, Message)>,
 }
 
 impl InMemoryCache {
     pub(crate) fn builder() -> CacheStoreBuilder {
-        CacheStoreBuilder {
-            ttl: Duration::from_secs(3600),
-            capacity: 1000,
-        }
+        CacheStoreBuilder { capacity: 1000 }
     }
 }
 
@@ -31,20 +27,15 @@ impl CacheStore for InMemoryCache {
     async fn set(&self, req: &Message, resp: &Message) {
         let key = Clone::clone(req);
         let val = Clone::clone(resp);
+        self.cache.insert(key, (Instant::now(), val)).await;
+    }
 
-        let mut expired_at = Instant::now().add(self.ttl);
-
-        for next in val.answers() {
-            let t = Instant::now().add(Duration::from_secs(next.time_to_live() as u64));
-            expired_at = expired_at.min(t);
-        }
-
-        self.cache.insert(key, (expired_at, val)).await;
+    async fn remove(&self, req: &Message) {
+        let _ = self.cache.remove(req).await;
     }
 }
 
 pub(crate) struct CacheStoreBuilder {
-    ttl: Duration,
     capacity: usize,
 }
 
@@ -54,23 +45,16 @@ impl CacheStoreBuilder {
         self
     }
 
-    pub(crate) fn ttl(mut self, ttl_secs: usize) -> Self {
-        self.ttl = Duration::from_secs(ttl_secs as u64);
-        self
-    }
-
     pub(crate) fn build(self) -> InMemoryCache {
-        let Self { ttl, capacity } = self;
+        let Self { capacity } = self;
         let cache = Cache::builder().max_capacity(capacity as u64).build();
 
-        InMemoryCache { ttl, cache }
+        InMemoryCache { cache }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use tokio::time::{sleep, Duration};
-
     use super::*;
 
     fn init() {
@@ -94,27 +78,15 @@ mod tests {
             Message::from(raw)
         };
 
-        let cs = InMemoryCache::builder().ttl(2).capacity(100).build();
+        let cs = InMemoryCache::builder().capacity(100).build();
         assert!(cs.get(&req).await.is_none());
 
         cs.set(&req, &res).await;
 
-        let is_expired = |expired_at: Instant| {
-            let ttl = expired_at.duration_since(Instant::now());
-            info!("ttl: {:?}", ttl);
-            ttl <= Duration::ZERO
-        };
-
-        assert!(cs.get(&req).await.is_some_and(|(expired_at, msg)| {
-            assert_eq!(&res, &msg);
-            !is_expired(expired_at)
-        }));
-
-        sleep(Duration::from_secs(2)).await;
-
-        assert!(cs.get(&req).await.is_some_and(|(expired_at, msg)| {
-            assert_eq!(&res, &msg);
-            is_expired(expired_at)
+        assert!(cs.get(&req).await.is_some_and(|(created_at, msg)| {
+            let elapsed = Instant::now().duration_since(created_at);
+            info!("elapsed: {:?}", elapsed);
+            &res == &msg
         }));
     }
 }

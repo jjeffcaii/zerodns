@@ -640,8 +640,13 @@ impl RR<'_> {
         Class::parse_u16(n).expect("Invalid RR class!")
     }
 
+    #[inline(always)]
+    pub(crate) fn time_to_live_pos(&self) -> usize {
+        self.offset + self.name().len() + 4
+    }
+
     pub fn time_to_live(&self) -> u32 {
-        let offset = self.offset + self.name().len() + 4;
+        let offset = self.time_to_live_pos();
         BigEndian::read_u32(&self.raw[offset..])
     }
 
@@ -689,6 +694,16 @@ impl RR<'_> {
                 size,
             }),
             Kind::MX => RData::MX(MX {
+                raw: &self.raw[..offset + size],
+                offset,
+                size,
+            }),
+            Kind::NS => RData::NS(NS {
+                raw: &self.raw[..offset + size],
+                offset,
+                size,
+            }),
+            Kind::HTTPS => RData::HTTPS(HTTPS {
                 raw: &self.raw[..offset + size],
                 offset,
                 size,
@@ -824,6 +839,8 @@ pub enum RData<'a> {
     MX(MX<'a>),
     SOA(SOA<'a>),
     PTR(PTR<'a>),
+    NS(NS<'a>),
+    HTTPS(HTTPS<'a>),
     UNKNOWN(&'a [u8]),
 }
 
@@ -836,6 +853,8 @@ impl<'a> Display for RData<'a> {
             RData::SOA(it) => write!(f, "{}", it),
             RData::PTR(it) => write!(f, "{}", it),
             RData::AAAA(it) => write!(f, "{}", it),
+            RData::NS(it) => write!(f, "{}", it),
+            RData::HTTPS(it) => write!(f, "{}", it),
             RData::UNKNOWN(it) => write!(f, "UNKNOWN({:?})", it),
         }
     }
@@ -854,6 +873,168 @@ impl A<'_> {
 impl<'a> Display for A<'a> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.ipaddr())
+    }
+}
+
+#[allow(clippy::upper_case_acronyms)]
+#[derive(Debug)]
+pub struct HTTPS<'a> {
+    raw: &'a [u8],
+    offset: usize,
+    size: usize,
+}
+
+impl HTTPS<'_> {
+    pub fn priority(&self) -> u16 {
+        BigEndian::read_u16(&self.raw[self.offset..])
+    }
+
+    pub fn target_name(&self) -> Notation<'_> {
+        Notation::new(self.raw, self.offset + 2)
+    }
+
+    pub fn params(&self) -> impl Iterator<Item = HttpsSvcParam<'_>> {
+        HttpsSvcParamIter(&self.raw[self.offset + 2 + self.target_name().len()..])
+    }
+}
+
+#[allow(clippy::upper_case_acronyms)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub enum SvcParamKey {
+    ALPN,
+    NODEFAULTALPN,
+    PORT,
+    IPV4HINT,
+    ECHCONFIG,
+    IPV6HINT,
+    PRIVATE(u16),
+    RESERVED,
+}
+
+impl Display for SvcParamKey {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SvcParamKey::ALPN => write!(f, "alpn"),
+            SvcParamKey::NODEFAULTALPN => write!(f, "no-default-alpn"),
+            SvcParamKey::PORT => write!(f, "port"),
+            SvcParamKey::IPV4HINT => write!(f, "ipv4hint"),
+            SvcParamKey::ECHCONFIG => write!(f, "echconfig"),
+            SvcParamKey::IPV6HINT => write!(f, "ipv6hint"),
+            SvcParamKey::PRIVATE(n) => write!(f, "key{:05}", n),
+            SvcParamKey::RESERVED => write!(f, "key65535"),
+        }
+    }
+}
+
+impl Into<u16> for SvcParamKey {
+    fn into(self) -> u16 {
+        match self {
+            SvcParamKey::ALPN => 1,
+            SvcParamKey::NODEFAULTALPN => 2,
+            SvcParamKey::PORT => 3,
+            SvcParamKey::IPV4HINT => 4,
+            SvcParamKey::ECHCONFIG => 5,
+            SvcParamKey::IPV6HINT => 6,
+            SvcParamKey::PRIVATE(n) => n,
+            SvcParamKey::RESERVED => 65535,
+        }
+    }
+}
+
+impl From<u16> for SvcParamKey {
+    fn from(value: u16) -> Self {
+        match value {
+            1 => Self::ALPN,
+            2 => Self::NODEFAULTALPN,
+            3 => Self::PORT,
+            4 => Self::IPV4HINT,
+            5 => Self::ECHCONFIG,
+            6 => Self::IPV6HINT,
+            65535 => Self::RESERVED,
+            other => Self::PRIVATE(other),
+        }
+    }
+}
+
+impl Display for HTTPS<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}\t{}.\t", self.priority(), self.target_name())?;
+
+        for (i, next) in self.params().enumerate() {
+            if i != 0 {
+                write!(f, " ")?;
+            }
+
+            write!(f, "{}=", next.key())?;
+
+            // write values
+            for (j, val) in next.values().enumerate() {
+                if j != 0 {
+                    write!(f, ",")?;
+                }
+                write!(f, "{}", unsafe { std::str::from_utf8_unchecked(val) })?;
+            }
+        }
+        Ok(())
+    }
+}
+
+struct HttpsSvcParamIter<'a>(&'a [u8]);
+
+impl<'a> Iterator for HttpsSvcParamIter<'a> {
+    type Item = HttpsSvcParam<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.0.is_empty() {
+            return None;
+        }
+
+        let next = HttpsSvcParam(self.0);
+        self.0 = &self.0[next.len()..];
+
+        Some(next)
+    }
+}
+
+pub struct HttpsSvcParam<'a>(&'a [u8]);
+
+impl HttpsSvcParam<'_> {
+    pub fn len(&self) -> usize {
+        let size = BigEndian::read_u16(&self.0[2..]) as usize;
+        4 + size
+    }
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn key(&self) -> SvcParamKey {
+        SvcParamKey::from(BigEndian::read_u16(self.0))
+    }
+
+    pub fn values(&self) -> impl Iterator<Item = &'_ [u8]> {
+        let size = BigEndian::read_u16(&self.0[2..]) as usize;
+        HttpsSvcParamValues(&self.0[4..4 + size])
+    }
+}
+
+struct HttpsSvcParamValues<'a>(&'a [u8]);
+
+impl<'a> Iterator for HttpsSvcParamValues<'a> {
+    type Item = &'a [u8];
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.0.is_empty() {
+            return None;
+        }
+        let mut size = self.0[0] as usize;
+        if size + 1 > self.0.len() {
+            size = self.0.len() - 1;
+        }
+
+        let next = &self.0[1..size + 1];
+        self.0 = &self.0[size + 1..];
+
+        Some(next)
     }
 }
 
@@ -936,6 +1117,34 @@ impl Display for PTR<'_> {
 
 #[allow(clippy::upper_case_acronyms)]
 #[derive(Debug)]
+pub struct NS<'a> {
+    raw: &'a [u8],
+    offset: usize,
+    size: usize,
+}
+
+impl NS<'_> {
+    pub fn len(&self) -> usize {
+        self.size
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn nameserver(&self) -> Notation<'_> {
+        Notation::new(self.raw, self.offset)
+    }
+}
+
+impl Display for NS<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.nameserver())
+    }
+}
+
+#[allow(clippy::upper_case_acronyms)]
+#[derive(Debug)]
 pub struct CNAME<'a> {
     raw: &'a [u8],
     offset: usize,
@@ -956,7 +1165,7 @@ impl CNAME<'_> {
     }
 }
 
-impl<'a> Display for CNAME<'a> {
+impl Display for CNAME<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.cname())
     }
@@ -1044,8 +1253,13 @@ impl<'a> Display for SOA<'a> {
 }
 
 fn is_valid_domain(domain: &str) -> bool {
+    if domain == "." {
+        return true;
+    }
+
     static RE: Lazy<Regex> =
-        Lazy::new(|| Regex::new("^([a-z0-9]{1,63})(\\.[a-z0-9]{1,63})+\\.?$").unwrap());
+        Lazy::new(|| Regex::new("^([a-z0-9_-]{1,63})(\\.[a-z0-9_-]{1,63})+\\.?$").unwrap());
+
     RE.is_match(domain)
 }
 
@@ -1317,7 +1531,7 @@ mod tests {
 
         let msg = {
             // let raw = hex::decode("d3138180000100020000000107696f73686f73740671746c63646e03636f6d0000010001c00c00010001000000140004b65bffd5c00c00010001000000140004705a287c0000290200000000000000").unwrap();
-            let s = "abe6818000010003000000000770616e63616b65056170706c6503636f6d0000410001c00c000500010000000100220770616e63616b650963646e2d6170706c6503636f6d06616b61646e73036e657400c02f000500010000000100140770616e63616b650167076161706c696d67c01ac05d0041000100000001002a0001008000002368747470733a2f2f646f682e646e732e6170706c652e636f6d2f646e732d7175657279";
+            let s = "1234818000010001000000000377777706676f6f676c6503636f6d0000410001c00c0041000100002f82000d00010000010006026832026833";
             let raw = hex::decode(s).unwrap();
             Message::from(raw)
         };

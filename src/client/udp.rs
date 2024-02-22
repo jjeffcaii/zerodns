@@ -15,7 +15,7 @@ use super::Client;
 #[derive(Debug, Clone)]
 pub struct UdpClient {
     addr: SocketAddr,
-    timeout: Option<Duration>,
+    timeout: Duration,
 }
 
 impl UdpClient {
@@ -23,15 +23,12 @@ impl UdpClient {
         UdpClientBuilder {
             inner: Self {
                 addr,
-                timeout: None,
+                timeout: Duration::from_secs(5),
             },
         }
     }
-}
 
-#[async_trait]
-impl Client for UdpClient {
-    async fn request(&self, req: &Message) -> Result<Option<Message>> {
+    async fn request_(&self, req: &Message) -> Result<Message> {
         let socket = UdpSocket::bind("0.0.0.0:0").await?;
 
         let mut framed = UdpFramed::new(socket, BytesCodec::default());
@@ -41,10 +38,17 @@ impl Client for UdpClient {
         match framed.next().await {
             Some(next) => {
                 let (b, _) = next?;
-                Ok(Some(Message::from(b)))
+                Ok(Message::from(b))
             }
-            None => Ok(None),
+            None => bail!("no record resolved!"),
         }
+    }
+}
+
+#[async_trait]
+impl Client for UdpClient {
+    async fn request(&self, req: &Message) -> Result<Message> {
+        tokio::time::timeout(self.timeout, self.request_(req)).await?
     }
 }
 
@@ -54,7 +58,7 @@ pub struct UdpClientBuilder {
 
 impl UdpClientBuilder {
     pub fn timeout(mut self, timeout: Duration) -> Self {
-        self.inner.timeout.replace(timeout);
+        self.inner.timeout = timeout;
         self
     }
 
@@ -80,7 +84,7 @@ mod tests {
     async fn test_request() -> anyhow::Result<()> {
         init();
 
-        let c = UdpClient::builder("223.5.5.5:53".parse()?)
+        let c = UdpClient::builder("199.85.127.10:53".parse()?)
             .timeout(Duration::from_secs(3))
             .build();
 
@@ -93,12 +97,12 @@ mod tests {
                     .recursive_query(true)
                     .build(),
             )
-            .question("baidu.com", Kind::A, Class::IN)
+            .question("www.google.com", Kind::HTTPS, Class::IN)
             .build()?;
 
-        let res = c.request(&req).await?;
+        let res = c.request(&req).await;
 
-        assert!(res.is_some_and(|msg| {
+        assert!(res.is_ok_and(|msg| {
             for next in msg.answers() {
                 info!(
                     "{}.\t{}\t{:?}\t{:?}\t{}",

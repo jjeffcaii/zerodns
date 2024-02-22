@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use crate::client::request;
 use async_trait::async_trait;
 
 use crate::filter::misc::OptionsReader;
@@ -10,21 +11,21 @@ use super::{Context, Filter, FilterFactory, Options};
 
 #[derive(Default)]
 pub(crate) struct ProxyByFilter {
-    upstreams: Arc<Vec<DNS>>,
+    servers: Arc<Vec<DNS>>,
     next: Option<Box<dyn Filter>>,
 }
 
 #[async_trait]
 impl Filter for ProxyByFilter {
     async fn on_request(&self, _: &mut Context, req: &mut Message) -> Result<Option<Message>> {
-        for addr in self.upstreams.iter() {
-            if let Ok(res) = addr.request(req).await {
+        for dns in self.servers.iter() {
+            if let Ok(res) = request(dns, req).await {
                 if log_enabled!(log::Level::Debug) {
                     for (i, question) in req.questions().enumerate() {
                         debug!(
                             "proxyby#{} ok: server={:?}, name={}",
                             i,
-                            addr,
+                            dns,
                             question.name()
                         );
                     }
@@ -69,7 +70,7 @@ impl FilterFactory for ProxyByFilterFactory {
 
     fn get(&self) -> Result<Self::Item> {
         Ok(ProxyByFilter {
-            upstreams: Clone::clone(&self.servers),
+            servers: Clone::clone(&self.servers),
             next: None,
         })
     }

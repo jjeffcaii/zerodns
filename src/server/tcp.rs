@@ -1,13 +1,12 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 
 use futures::{SinkExt, StreamExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Notify;
 use tokio_util::codec::{FramedRead, FramedWrite};
 
-use crate::cache::CacheStore;
+use crate::cache::{CacheStore, CacheStoreExt};
 use crate::handler::Handler;
 use crate::protocol::Codec;
 use crate::Result;
@@ -84,21 +83,18 @@ where
             if let Some(cache) = cache.as_deref() {
                 let id = req.id();
                 req.set_id(0);
-
-                if let Some((expired_at, mut exist)) = cache.get(&req).await {
-                    let ttl = expired_at - Instant::now();
-                    if ttl > Duration::ZERO {
-                        exist.set_id(id);
-
-                        debug!("use cache: ttl={:?}", ttl);
-
-                        w.send(&exist).await?;
-
-                        return Ok(());
-                    }
-                }
-
+                let cached = cache.get_fixed(&req).await;
                 req.set_id(id);
+
+                if let Some(mut exist) = cached {
+                    exist.set_id(id);
+
+                    debug!("use dns cache");
+
+                    w.send(&exist).await?;
+
+                    return Ok(());
+                }
             }
 
             let msg = handler
@@ -123,10 +119,11 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::cache::InMemoryCache;
     use std::str::FromStr;
     use std::sync::atomic::{AtomicU64, Ordering};
 
+    use crate::cache::InMemoryCache;
+    use crate::client::request;
     use crate::protocol::{Message, DNS};
 
     use super::*;
@@ -188,10 +185,10 @@ mod tests {
         let dns = DNS::from_str(&format!("tcp://127.0.0.1:{}", port))?;
 
         // no cache
-        assert!(dns.request(&req).await.is_ok_and(|msg| &msg == &res));
+        assert!(request(&dns, &req).await.is_ok_and(|msg| &msg == &res));
 
         // use cache
-        assert!(dns.request(&req).await.is_ok_and(|msg| &msg == &res));
+        assert!(request(&dns, &req).await.is_ok_and(|msg| &msg == &res));
 
         assert_eq!(
             1,

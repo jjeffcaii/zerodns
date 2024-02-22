@@ -1,6 +1,7 @@
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
 
+use crate::client::request;
 use async_trait::async_trait;
 use maxminddb::Reader;
 
@@ -25,19 +26,24 @@ impl ChinaDNSFilter {
         all_china: bool,
     ) -> Option<Message> {
         for server in servers.iter() {
-            if let Ok(r) = server.request(req).await {
-                if all_china {
-                    // reject answers of china ips
-                    for next in r.answers().filter(|it| it.kind() == Kind::A) {
-                        if let Ok(RData::A(a)) = next.rdata() {
-                            if !Self::is_china(geoip, a.ipaddr()) {
-                                return None;
+            match request(server, req).await {
+                Ok(r) => {
+                    info!("query from {:?} ok", server);
+                    if all_china {
+                        // reject answers of china ips
+                        for next in r.answers().filter(|it| it.kind() == Kind::A) {
+                            if let Ok(RData::A(a)) = next.rdata() {
+                                if !Self::is_china(geoip, a.ipaddr()) {
+                                    return None;
+                                }
                             }
                         }
                     }
+                    return Some(r);
                 }
-
-                return Some(r);
+                Err(e) => {
+                    warn!("failed to query from {:?}: {:?}", server, e);
+                }
             }
         }
         None
@@ -190,7 +196,7 @@ mod tests {
 
         let opts = toml::from_str::<Options>(
             r#"
-        trusted = ["8.8.8.8","8.8.4.4"]
+        trusted = ["tcp://199.85.126.10","tcp://199.85.127.10"]
         mistrusted = ["223.5.5.5","223.6.6.6"]
         geoip_database = "GeoLite2-Country.mmdb"
         "#,

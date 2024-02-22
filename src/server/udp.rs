@@ -1,5 +1,4 @@
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 
 use futures::StreamExt;
 use tokio::net::UdpSocket;
@@ -7,7 +6,7 @@ use tokio::sync::Notify;
 use tokio_util::codec::BytesCodec;
 use tokio_util::udp::UdpFramed;
 
-use crate::cache::CacheStore;
+use crate::cache::{CacheStore, CacheStoreExt};
 use crate::handler::Handler;
 use crate::protocol::Message;
 use crate::Result;
@@ -40,19 +39,14 @@ where
         if let Some(cache) = cache.as_deref() {
             let id = req.id();
             req.set_id(0);
-
-            if let Some((expired_at, mut exist)) = cache.get(&req).await {
-                let ttl = expired_at - Instant::now();
-                if ttl > Duration::ZERO {
-                    exist.set_id(id);
-
-                    debug!("use cache: ttl={:?}", ttl);
-
-                    return Ok(exist);
-                }
-            }
-
+            let cached = cache.get_fixed(&req).await;
             req.set_id(id);
+
+            if let Some(mut exist) = cached {
+                exist.set_id(id);
+                debug!("use dns cache");
+                return Ok(exist);
+            }
         }
 
         let res = h.handle(&mut req).await?;
@@ -98,7 +92,7 @@ where
 
                             if req.question_count() > 0 {
                                 for next in req.questions() {
-                                    info!("0x{:04x} > {}.\t{:?}\t{:?}", req.id(), next.name(), next.class(), next.kind());
+                                    info!("{}-0x{:04x} => {}.\t\t{:?}\t{:?}", &peer, req.id(), next.name(), next.class(), next.kind());
                                 }
                             }
 
@@ -109,7 +103,8 @@ where
                                             for next in res.answers() {
                                                 if let Ok(rdata) = next.rdata(){
                                                     info!(
-                                                        "0x{:04x} < {}.\t{}\t{:?}\t{:?}\t{}",
+                                                        "{}-0x{:04x} <= {}.\t{}\t{:?}\t{:?}\t{}",
+                                                        &peer,
                                                         res.id(),
                                                         next.name(),
                                                         next.time_to_live(),
@@ -148,10 +143,11 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::cache::InMemoryCache;
     use std::str::FromStr;
     use std::sync::atomic::{AtomicU64, Ordering};
 
+    use crate::cache::InMemoryCache;
+    use crate::client::request;
     use crate::protocol::{Message, DNS};
 
     use super::*;
@@ -212,10 +208,10 @@ mod tests {
         let dns = DNS::from_str(&format!("127.0.0.1:{}", port))?;
 
         // no cache
-        assert!(dns.request(&req).await.is_ok_and(|msg| &msg == &res));
+        assert!(request(&dns, &req).await.is_ok_and(|msg| &msg == &res));
 
         // use cache
-        assert!(dns.request(&req).await.is_ok_and(|msg| &msg == &res));
+        assert!(request(&dns, &req).await.is_ok_and(|msg| &msg == &res));
 
         assert_eq!(
             1,

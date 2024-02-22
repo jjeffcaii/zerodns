@@ -43,6 +43,7 @@ hex = "0.4.3"
 strum = { version = "0.26.1", default-features = false, features = ["strum_macros", "derive"] }
 strum_macros = "0.26.1"
 deadpool = "0.10.0"
+socket2 = "0.5.5"
 
 [dev-dependencies]
 hex = "0.4.3"

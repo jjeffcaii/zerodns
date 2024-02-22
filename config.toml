@@ -4,15 +4,17 @@ cache_size = 1000
 
 [filters.alidns]
 kind = "proxyby"
-props = { servers = ["223.5.5.5", "223.6.6.6"] }
+props.servers = ["223.5.5.5", "223.6.6.6"]
 
 [filters.opendns]
 kind = "proxyby"
-props = { servers = ["tcp://208.67.222.222:443", "tcp://208.67.220.220:443"] }
+props.servers = ["tcp://208.67.222.222:443", "tcp://208.67.220.220:443"]
 
 [filters.chinadns]
 kind = "chinadns"
-props = { trusted = ["tcp://208.67.222.222:443", "tcp://208.67.220.220:443"], mistrusted = ["223.5.5.5", "223.6.6.6"], geoip_database = "GeoLite2-Country.mmdb" }
+props.trusted = ["tcp://208.67.222.222:443", "tcp://208.67.220.220:443"]
+props.mistrusted = ["223.5.5.5", "223.6.6.6"]
+props.geoip_database = "GeoLite2-Country.mmdb"
 
 [[rules]]
 domain = "*.cn"
