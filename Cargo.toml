@@ -33,6 +33,7 @@ smallvec = { version = "1.13.1", features = ["write"] }
 ahash = "0.8.7"
 hashbrown = "0.14.3"
 serde = { version = "1.0.196", features = ["derive"] }
+serde_json = "1.0.128"
 toml = "0.8.10"
 glob = "0.3.1"
 maxminddb = "0.24.0"
@@ -44,6 +45,7 @@ strum = { version = "0.26.1", default-features = false, features = ["strum_macro
 strum_macros = "0.26.1"
 deadpool = "0.10.0"
 socket2 = "0.5.5"
+mlua = { version = "0.9", features = ["luajit", "vendored", "serialize", "async", "macros", "send", "parking_lot"] }
 
 [dev-dependencies]
 hex = "0.4.3"

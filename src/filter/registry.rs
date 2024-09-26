@@ -72,19 +72,33 @@ where
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use crate::filter::Context;
+    use crate::protocol::Message;
     use async_trait::async_trait;
 
-    use super::*;
-
-    struct MockFilter {}
+    #[derive(Default)]
+    struct MockFilter {
+        next: Option<Box<dyn Filter>>,
+    }
 
     #[async_trait]
     impl Filter for MockFilter {
-        fn next(&self) -> Option<&dyn Filter> {
-            None
+        async fn handle(
+            &self,
+            ctx: &mut Context,
+            req: &mut Message,
+            res: &mut Option<Message>,
+        ) -> Result<()> {
+            match &self.next {
+                None => Ok(()),
+                Some(next) => next.handle(ctx, req, res).await,
+            }
         }
 
-        fn set_next(&mut self, _: Box<dyn Filter>) {}
+        fn set_next(&mut self, next: Box<dyn Filter>) {
+            self.next.replace(next);
+        }
     }
 
     struct MockFilterFactory {}
@@ -93,7 +107,7 @@ mod tests {
         type Item = MockFilter;
 
         fn get(&self) -> Result<Self::Item> {
-            Ok(MockFilter {})
+            Ok(Default::default())
         }
     }
 
@@ -110,6 +124,6 @@ mod tests {
         register("foobar", |opts: &Options| Ok(MockFilterFactory {}));
 
         let res = load("foobar", &Default::default());
-        assert!(res.is_ok_and(|g| g.get_boxed().is_ok_and(|f| f.next().is_none())));
+        assert!(res.is_ok_and(|g| g.get_boxed().is_ok()));
     }
 }

@@ -64,7 +64,14 @@ impl ChinaDNSFilter {
 
 #[async_trait]
 impl Filter for ChinaDNSFilter {
-    async fn on_request(&self, ctx: &mut Context, req: &mut Message) -> Result<Option<Message>> {
+    async fn handle(
+        &self,
+        ctx: &mut Context,
+        req: &mut Message,
+        res: &mut Option<Message>,
+    ) -> Result<()> {
+        debug!("filter on chinadns");
+
         let (tx, mut rx) = tokio::sync::mpsc::channel::<(bool, Message)>(1);
 
         let trusted = Clone::clone(&self.trusted);
@@ -99,28 +106,20 @@ impl Filter for ChinaDNSFilter {
         //     domain.extend_from_slice(b);
         // }
 
-        match rx.recv().await {
-            Some((china, msg)) => {
-                // info!(
-                //     "{}: oversea={}",
-                //     String::from_utf8_lossy(&domain[..]),
-                //     !china
-                // );
-                Ok(Some(msg))
-            }
-            None => Ok(None),
-        }
-    }
+        if let Some((china, msg)) = rx.recv().await {
+            // info!(
+            //     "{}: oversea={}",
+            //     String::from_utf8_lossy(&domain[..]),
+            //     !china
+            // );
 
-    async fn on_response(&self, ctx: &mut Context, res: &mut Option<Message>) -> Result<()> {
+            res.replace(msg);
+        }
+
         match &self.next {
+            Some(next) => next.handle(ctx, req, res).await,
             None => Ok(()),
-            Some(next) => next.on_response(ctx, res).await,
         }
-    }
-
-    fn next(&self) -> Option<&dyn Filter> {
-        self.next.as_deref()
     }
 
     fn set_next(&mut self, next: Box<dyn Filter>) {
@@ -224,10 +223,12 @@ mod tests {
                 let raw = hex::decode(baidu)?;
                 Message::from(Bytes::from(raw))
             };
+            let mut resp = None;
 
-            let res = f.on_request(&mut ctx, &mut req).await?;
+            let res = f.handle(&mut ctx, &mut req, &mut resp).await;
 
-            assert!(res.is_some_and(|it| {
+            assert!(res.is_ok());
+            assert!(resp.is_some_and(|it| {
                 show(&it);
                 true
             }));
@@ -242,11 +243,13 @@ mod tests {
                 let raw = hex::decode(google)?;
                 Message::from(Bytes::from(raw))
             };
+            let mut resp = None;
 
-            let res = f.on_request(&mut ctx, &mut req).await?;
+            let res = f.handle(&mut ctx, &mut req, &mut resp).await;
 
-            assert!(res.is_some_and(|res| {
-                show(&res);
+            assert!(res.is_ok());
+            assert!(resp.is_some_and(|it| {
+                show(&it);
                 true
             }));
         }

@@ -17,9 +17,16 @@ pub(crate) struct ProxyByFilter {
 
 #[async_trait]
 impl Filter for ProxyByFilter {
-    async fn on_request(&self, _: &mut Context, req: &mut Message) -> Result<Option<Message>> {
+    async fn handle(
+        &self,
+        ctx: &mut Context,
+        req: &mut Message,
+        res: &mut Option<Message>,
+    ) -> Result<()> {
+        debug!("filter on proxyby");
+
         for dns in self.servers.iter() {
-            if let Ok(res) = request(dns, req).await {
+            if let Ok(msg) = request(dns, req).await {
                 if log_enabled!(log::Level::Debug) {
                     for (i, question) in req.questions().enumerate() {
                         debug!(
@@ -30,14 +37,16 @@ impl Filter for ProxyByFilter {
                         );
                     }
                 }
-                return Ok(Some(res));
+
+                res.replace(msg);
+                break;
             }
         }
-        Ok(None)
-    }
 
-    fn next(&self) -> Option<&dyn Filter> {
-        self.next.as_deref()
+        match &self.next {
+            Some(next) => next.handle(ctx, req, res).await,
+            None => Ok(()),
+        }
     }
 
     fn set_next(&mut self, next: Box<dyn Filter>) {
@@ -80,8 +89,6 @@ impl FilterFactory for ProxyByFilterFactory {
 mod tests {
     use bytes::Bytes;
 
-    use crate::filter::FilterFactoryExt;
-
     use super::*;
 
     fn init() {
@@ -101,6 +108,7 @@ mod tests {
             .unwrap();
             Message::from(Bytes::from(raw))
         };
+        let mut res = None;
 
         let opts = toml::from_str::<Options>(
             r#"
@@ -110,16 +118,10 @@ mod tests {
         .unwrap();
 
         let factory = ProxyByFilterFactory::try_from(&opts).unwrap();
-        let mut f = factory.get().unwrap();
-        let resp = f.on_request(&mut ctx, &mut req).await;
+        let f = factory.get().unwrap();
+        let resp = f.handle(&mut ctx, &mut req, &mut res).await;
 
-        assert!(resp.is_ok_and(|res| res.is_some_and(|record| {
-            info!("got: {}", record.id());
-            true
-        })));
-
-        assert!(f.next().is_none());
-        f.set_next(factory.get_boxed().unwrap());
-        assert!(f.next().is_some());
+        assert!(resp.is_ok());
+        assert!(res.is_some());
     }
 }

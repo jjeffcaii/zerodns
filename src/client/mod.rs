@@ -15,7 +15,7 @@ pub trait Client {
 }
 
 pub async fn request(dns: &DNS, request: &Message) -> Result<Message> {
-    match dns {
+    let ret = match dns {
         DNS::UDP(addr) => {
             let c = UdpClient::builder(*addr).build();
             c.request(request).await
@@ -25,5 +25,11 @@ pub async fn request(dns: &DNS, request: &Message) -> Result<Message> {
             c.request(request).await
         }
         _ => todo!(),
+    };
+
+    if let Err(e) = &ret {
+        error!("request dns failed: {:?}", e);
     }
+
+    ret
 }

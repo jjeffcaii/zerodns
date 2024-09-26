@@ -23,9 +23,9 @@ impl FilteredHandler {
 impl Handler for FilteredHandler {
     async fn handle(&self, req: &mut Message) -> Result<Option<Message>> {
         let mut ctx = Context::default();
-        let mut res = self.filter.on_request(&mut ctx, req).await?;
-        self.filter.on_response(&mut ctx, &mut res).await?;
-        Ok(res)
+        let mut resp = None;
+        self.filter.handle(&mut ctx, req, &mut resp).await?;
+        Ok(resp)
     }
 }
 
@@ -84,28 +84,17 @@ mod tests {
 
     #[async_trait::async_trait]
     impl Filter for MockFilter {
-        async fn on_request(
+        async fn handle(
             &self,
             ctx: &mut Context,
             req: &mut Message,
-        ) -> Result<Option<Message>> {
-            info!("{} on_request called", self.id);
-            match &self.next {
-                None => Ok(None),
-                Some(f) => f.on_request(ctx, req).await,
-            }
-        }
-
-        async fn on_response(&self, ctx: &mut Context, res: &mut Option<Message>) -> Result<()> {
-            info!("{} on_response called", self.id);
+            res: &mut Option<Message>,
+        ) -> Result<()> {
+            info!("{} handle called", self.id);
             match &self.next {
                 None => Ok(()),
-                Some(f) => f.on_response(ctx, res).await,
+                Some(f) => f.handle(ctx, req, res).await,
             }
-        }
-
-        fn next(&self) -> Option<&dyn Filter> {
-            self.next.as_deref()
         }
 
         fn set_next(&mut self, next: Box<dyn Filter>) {

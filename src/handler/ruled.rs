@@ -223,20 +223,17 @@ mod tests {
         let mut req = {
             let raw = hex::decode(
                 "f2500120000100000000000105626169647503636f6d00000100010000291000000000000000",
-            )
-            .unwrap();
+            )?;
             Message::from(raw)
         };
 
         let x = NoopFilter::requests();
-        let y = NoopFilter::responses();
 
         let res = h.handle(&mut req).await;
 
         assert!(res.is_ok());
 
         assert_eq!(3, NoopFilter::requests() - x);
-        assert_eq!(3, NoopFilter::responses() - y);
 
         Ok(())
     }

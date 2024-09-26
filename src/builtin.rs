@@ -60,6 +60,10 @@ mod tests {
         {
             let opts: Options = toml::from_str(
                 r#"
+            script = """
+            function handle(ctx,req)
+            end
+            """
             "#,
             )
             .unwrap();
