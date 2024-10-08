@@ -4,7 +4,7 @@ use crate::Result;
 use async_trait::async_trait;
 use once_cell::sync::Lazy;
 
-use crate::filter::{Context, FilterFactory, Options};
+use crate::filter::{handle_next, Context, FilterFactory, Options};
 use crate::protocol::Message;
 
 use super::proto::Filter;
@@ -41,10 +41,7 @@ impl Filter for NoopFilter {
         let cnt = seq.fetch_add(1, Ordering::SeqCst) + 1;
         info!("call 'handle' from noop filter ok: cnt={}", cnt);
 
-        match &self.next {
-            Some(next) => next.handle(ctx, req, res).await,
-            None => Ok(()),
-        }
+        handle_next(self.next.as_deref(), ctx, req, res).await
     }
 
     fn set_next(&mut self, next: Box<dyn Filter>) {

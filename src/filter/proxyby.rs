@@ -7,7 +7,7 @@ use crate::filter::misc::OptionsReader;
 use crate::protocol::{Message, DNS};
 use crate::Result;
 
-use super::{Context, Filter, FilterFactory, Options};
+use super::{handle_next, Context, Filter, FilterFactory, Options};
 
 #[derive(Default)]
 pub(crate) struct ProxyByFilter {
@@ -23,30 +23,27 @@ impl Filter for ProxyByFilter {
         req: &mut Message,
         res: &mut Option<Message>,
     ) -> Result<()> {
-        debug!("filter on proxyby");
-
-        for dns in self.servers.iter() {
-            if let Ok(msg) = request(dns, req).await {
-                if log_enabled!(log::Level::Debug) {
-                    for (i, question) in req.questions().enumerate() {
-                        debug!(
-                            "proxyby#{} ok: server={:?}, name={}",
-                            i,
-                            dns,
-                            question.name()
-                        );
+        if res.is_none() {
+            for dns in self.servers.iter() {
+                if let Ok(msg) = request(dns, req).await {
+                    if log_enabled!(log::Level::Debug) {
+                        for (i, question) in req.questions().enumerate() {
+                            debug!(
+                                "proxyby#{} ok: server={:?}, name={}",
+                                i,
+                                dns,
+                                question.name()
+                            );
+                        }
                     }
-                }
 
-                res.replace(msg);
-                break;
+                    res.replace(msg);
+                    break;
+                }
             }
         }
 
-        match &self.next {
-            Some(next) => next.handle(ctx, req, res).await,
-            None => Ok(()),
-        }
+        handle_next(self.next.as_deref(), ctx, req, res).await
     }
 
     fn set_next(&mut self, next: Box<dyn Filter>) {

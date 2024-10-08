@@ -11,7 +11,7 @@
 
 a DNS server in Rust, which is inspired from chinadns/dnsmasq.
 
-> WARNING: still in an active development!!!
+> :construction_worker: WARNING: still in an active development!!!
 
 ## Goals
 
@@ -62,6 +62,31 @@ props = { servers = ["tcp://208.67.222.222:443", "tcp://208.67.220.220:443"] }
 kind = "chinadns"
 props = { trusted = ["tcp://208.67.222.222:443", "tcp://208.67.220.220:443"], mistrusted = ["223.5.5.5", "223.6.6.6"], geoip_database = "GeoLite2-Country.mmdb" }
 
+# a lua filter example which show how to resolve addr by lua, see src/filter/lua.rs for more infomation.
+[filters.lua]
+kind = "lua"
+props.script = """
+-- The filter entrance:
+function handle(ctx)
+  -- log something...
+  for i,v in ipairs(ctx.request:questions()) do
+    logger:info('---- question#'..i..': '..v.name)
+  end
+
+  -- resolve addr from 223.5.5.5
+  local resp = resolve(ctx.request,'223.5.5.5')
+
+  -- log something...
+  for i,v in ipairs(resp:answers()) do
+    logger:info('---- answers#'..i..': name='..v.name..', rdata='..v.rdata)
+  end
+
+  -- answer it!
+  ctx:answer(resp)
+
+end
+"""
+
 ##### FILTERS END #####
 
 ##### RULES BEGIN #####
@@ -70,27 +95,26 @@ props = { trusted = ["tcp://208.67.222.222:443", "tcp://208.67.220.220:443"], mi
 # - will check rules below one by one
 # - the 'domain' field follows the glob syntax
 
-# for domain of '*.cn', use alidns filter
+# RULE-1: for those domains of '*.cn', use lua filter
 [[rules]]
 domain = "*.cn"
-filter = "alidns"
+filters = ["lua"]
 
-# for domain of '*apple.com', use alidns filter
+# RULE-2: for those domains of '*apple.com', use alidns filter
 [[rules]]
 domain = "*.apple.com"
 filter = "alidns"
 
-# for domain of '*google*', use opendns filter
+# RULE-3: for those domains of '*google*', use opendns filter
 [[rules]]
 domain = "*google*"
 filter = "opendns"
 
-# FINAL: use chinadns for others
+# RULE-FINAL: use chinadns for others
 [[rules]]
 domain = "*"
 filter = "chinadns"
 
 ##### RULES END #####
-
 
 ```

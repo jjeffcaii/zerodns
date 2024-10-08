@@ -33,7 +33,11 @@ impl UdpClient {
 
         let mut framed = UdpFramed::new(socket, BytesCodec::default());
 
-        framed.send((req.clone().0.freeze(), self.addr)).await?;
+        let bb = req.clone().0.freeze();
+
+        if let Err(e) = framed.send((bb, self.addr)).await {
+            return Err(e.into());
+        }
 
         match framed.next().await {
             Some(next) => {
@@ -74,7 +78,7 @@ mod tests {
     use crate::client::Client;
     use crate::protocol::{Class, Flags, Kind, Message, OpCode};
 
-    use super::UdpClient;
+    use super::*;
 
     fn init() {
         pretty_env_logger::try_init_timed().ok();
@@ -84,8 +88,8 @@ mod tests {
     async fn test_request() -> anyhow::Result<()> {
         init();
 
-        let c = UdpClient::builder("199.85.127.10:53".parse()?)
-            .timeout(Duration::from_secs(3))
+        let c = UdpClient::builder("1.1.1.1:53".parse()?)
+            .timeout(Duration::from_secs(5))
             .build();
 
         let req = Message::builder()

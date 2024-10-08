@@ -27,7 +27,7 @@ pub struct Filter {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Rule {
     pub domain: String,
-    pub filter: String,
+    pub filters: Vec<String>,
 }
 
 pub fn read_from_toml(pt: PathBuf) -> anyhow::Result<Config> {

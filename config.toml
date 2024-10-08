@@ -16,18 +16,42 @@ props.trusted = ["tcp://208.67.222.222:443", "tcp://208.67.220.220:443"]
 props.mistrusted = ["223.5.5.5", "223.6.6.6"]
 props.geoip_database = "GeoLite2-Country.mmdb"
 
+[filters.lua]
+kind = "lua"
+props.script = """
+-- The filter entrance:
+function handle(ctx)
+  -- log something...
+  for i,v in ipairs(ctx.request:questions()) do
+    logger:info('---- question#'..i..': '..v.name)
+  end
+
+  -- resolve addr from 223.5.5.5
+  local resp = resolve(ctx.request,'223.5.5.5')
+
+  -- log something...
+  for i,v in ipairs(resp:answers()) do
+    logger:info('---- answers#'..i..': name='..v.name..', rdata='..v.rdata)
+  end
+
+  -- answer it!
+  ctx:answer(resp)
+
+end
+"""
+
 [[rules]]
 domain = "*.cn"
-filter = "alidns"
+filters = ["lua"]
 
 [[rules]]
 domain = "*.apple.com"
-filter = "alidns"
+filters = ["alidns"]
 
 [[rules]]
 domain = "*google*"
-filter = "opendns"
+filters = ["opendns"]
 
 [[rules]]
 domain = "*"
-filter = "chinadns"
+filters = ["chinadns"]

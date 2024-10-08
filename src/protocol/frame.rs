@@ -157,6 +157,64 @@ pub enum Kind {
     OPT = 41,
 }
 
+impl Display for Kind {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Kind::A => f.write_str("A"),
+            Kind::AAAA => f.write_str("AAAA"),
+            Kind::AFSDB => f.write_str("AFSDB"),
+            Kind::APL => f.write_str("APL"),
+            Kind::CAA => f.write_str("CAA"),
+            Kind::CDNSKEY => f.write_str("CDNSKEY"),
+            Kind::CDS => f.write_str("CDS"),
+            Kind::CERT => f.write_str("CERT"),
+            Kind::CNAME => f.write_str("CNAME"),
+            Kind::CSYNC => f.write_str("CSYNC"),
+            Kind::DHCID => f.write_str("DHCID"),
+            Kind::DLV => f.write_str("DLV"),
+            Kind::DNAME => f.write_str("DNAME"),
+            Kind::DNSKEY => f.write_str("DNSKEY"),
+            Kind::DS => f.write_str("DS"),
+            Kind::EUI48 => f.write_str("EUI48"),
+            Kind::EUI64 => f.write_str("EUI64"),
+            Kind::HINFO => f.write_str("HINFO"),
+            Kind::HIP => f.write_str("HIP"),
+            Kind::HTTPS => f.write_str("HTTPS"),
+            Kind::IPSECKEY => f.write_str("IPSECKEY"),
+            Kind::KEY => f.write_str("KEY"),
+            Kind::KX => f.write_str("KX"),
+            Kind::LOC => f.write_str("LOC"),
+            Kind::MX => f.write_str("MX"),
+            Kind::NAPTR => f.write_str("NAPTR"),
+            Kind::NS => f.write_str("NS"),
+            Kind::NSEC => f.write_str("NSEC"),
+            Kind::NSEC3 => f.write_str("NSEC3"),
+            Kind::NSEC3PARAM => f.write_str("NSEC3PARAM"),
+            Kind::OPENPGPKEY => f.write_str("OPENPGPKEY"),
+            Kind::PTR => f.write_str("PTR"),
+            Kind::RRSIG => f.write_str("RSIG"),
+            Kind::RP => f.write_str("RP"),
+            Kind::SIG => f.write_str("SIG"),
+            Kind::SMIMEA => f.write_str("SMIMEA"),
+            Kind::SOA => f.write_str("SOA"),
+            Kind::SRV => f.write_str("SRV"),
+            Kind::SSHFP => f.write_str("SSHFP"),
+            Kind::SVCB => f.write_str("SVCB"),
+            Kind::TA => f.write_str("TA"),
+            Kind::TKEY => f.write_str("TKEY"),
+            Kind::TLSA => f.write_str("TLSA"),
+            Kind::TSIG => f.write_str("TSIG"),
+            Kind::TXT => f.write_str("TXT"),
+            Kind::URI => f.write_str("URI"),
+            Kind::ZONEMD => f.write_str("ZONEMD"),
+            Kind::ANY => f.write_str("ANY"),
+            Kind::AXFR => f.write_str("AXFR"),
+            Kind::IXFR => f.write_str("IXFR"),
+            Kind::OPT => f.write_str("OPT"),
+        }
+    }
+}
+
 #[derive(Debug, Copy, Clone, PartialEq, Eq, EnumIter, Hash)]
 pub enum Class {
     /// the Internet
@@ -167,6 +225,17 @@ pub enum Class {
     CH = 3,
     /// Hesiod, see https://en.wikipedia.org/wiki/Hesiod_(name_service)
     HS = 4,
+}
+
+impl Display for Class {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Class::IN => f.write_str("IN"),
+            Class::CS => f.write_str("CS"),
+            Class::CH => f.write_str("CH"),
+            Class::HS => f.write_str("HS"),
+        }
+    }
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, EnumIter, Hash)]

@@ -9,6 +9,8 @@ pub(crate) use registry::load;
 pub(crate) use registry::FilterFactoryExt;
 pub use registry::{register, FilterFactory, Options};
 
+pub(crate) use proto::handle_next;
+
 mod chinadns;
 mod lua;
 mod misc;

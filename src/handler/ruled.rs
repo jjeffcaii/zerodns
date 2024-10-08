@@ -42,17 +42,17 @@ impl Filter for FilterFacade {
 #[derive(Debug, Clone)]
 struct Rule {
     pattern: Option<Pattern>,
-    filter: String,
+    filters: Vec<String>,
 }
 
 impl Rule {
-    fn new(domain: &str, filter: String) -> Result<Self> {
+    fn new(domain: &str, filters: Vec<String>) -> Result<Self> {
         let pattern = match domain {
-            "*" => None,
+            "" | "*" => None,
             other => Some(Pattern::new(domain)?),
         };
 
-        Ok(Self { pattern, filter })
+        Ok(Self { pattern, filters })
     }
 
     fn is_match(&self, domain: &str) -> bool {
@@ -106,7 +106,7 @@ impl RuledHandlerBuilder {
     }
 
     pub(crate) fn rule(mut self, rule: &RuleConf) -> Result<Self> {
-        let r = Rule::new(&rule.domain, Clone::clone(&rule.filter))?;
+        let r = Rule::new(&rule.domain, Clone::clone(&rule.filters))?;
         self.rules.push(r);
         Ok(self)
     }
@@ -178,7 +178,10 @@ impl Handler for RuledHandler {
     async fn handle(&self, req: &mut Message) -> Result<Option<Message>> {
         if let Some(rule) = self.get_rule(req) {
             let mut b = FilteredHandler::builder();
-            self.add_next_filter(&mut b, &rule.filter)?;
+
+            for filter in &rule.filters {
+                self.add_next_filter(&mut b, filter)?;
+            }
 
             if let Some(h) = b.build() {
                 return h.handle(req).await;
@@ -226,7 +229,7 @@ mod tests {
 
             [[rules]]
             domain = "*"
-            filter = "foobar"
+            filters = ["foobar"]
 
             "#,
             )

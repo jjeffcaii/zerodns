@@ -220,7 +220,9 @@ mod tests {
     async fn test_request() -> Result<()> {
         init();
 
-        let c = TcpClient::builder("199.85.127.10:53".parse()?).build()?;
+        let c = TcpClient::builder("1.1.1.1:53".parse()?)
+            .timeout(Duration::from_secs(5))
+            .build()?;
 
         for _ in 0..3 {
             let req = Message::builder()

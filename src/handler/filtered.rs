@@ -7,7 +7,7 @@ use crate::protocol::Message;
 use crate::Result;
 
 pub(crate) struct FilteredHandler {
-    filter: Box<dyn Filter>,
+    root: Box<dyn Filter>,
 }
 
 impl FilteredHandler {
@@ -23,7 +23,7 @@ impl Handler for FilteredHandler {
     async fn handle(&self, req: &mut Message) -> Result<Option<Message>> {
         let mut ctx = Context::default();
         let mut resp = None;
-        self.filter.handle(&mut ctx, req, &mut resp).await?;
+        self.root.handle(&mut ctx, req, &mut resp).await?;
         Ok(resp)
     }
 }
@@ -57,7 +57,8 @@ impl FilteredHandlerBuilder {
                         Some(parent) => parent.set_next(next),
                     }
                 }
-                Some(FilteredHandler { filter: root })
+
+                Some(FilteredHandler { root })
             }
         }
     }

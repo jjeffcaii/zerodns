@@ -5,11 +5,13 @@ use crate::client::request;
 use async_trait::async_trait;
 use maxminddb::Reader;
 
+use tokio::sync::mpsc;
+
 use crate::filter::misc::OptionsReader;
 use crate::protocol::{Kind, Message, RData, DNS};
 use crate::Result;
 
-use super::{Context, Filter, FilterFactory, Options};
+use super::{handle_next, Context, Filter, FilterFactory, Options};
 
 pub(crate) struct ChinaDNSFilter {
     trusted: Arc<Vec<DNS>>,
@@ -70,55 +72,55 @@ impl Filter for ChinaDNSFilter {
         req: &mut Message,
         res: &mut Option<Message>,
     ) -> Result<()> {
-        debug!("filter on chinadns");
+        if res.is_none() {
+            let (tx, mut rx) = mpsc::channel::<(bool, Message)>(1);
 
-        let (tx, mut rx) = tokio::sync::mpsc::channel::<(bool, Message)>(1);
+            let trusted = Clone::clone(&self.trusted);
+            let mistrusted = Clone::clone(&self.mistrusted);
 
-        let mistrusted = Clone::clone(&self.mistrusted);
-        {
-            let msg = Clone::clone(req);
-            let geoip = Clone::clone(&self.geoip);
-            let tx = Clone::clone(&tx);
-            tokio::spawn(async move {
-                if let Some(msg) = Self::request(&msg, &mistrusted, &geoip, true).await {
-                    tx.send((true, msg)).await.ok();
-                }
-            });
+            // resolve from mistrusted dns
+            {
+                let msg = Clone::clone(req);
+                let geoip = Clone::clone(&self.geoip);
+                let tx = Clone::clone(&tx);
+                tokio::spawn(async move {
+                    if let Some(msg) = Self::request(&msg, &mistrusted, &geoip, true).await {
+                        tx.send((true, msg)).await.ok();
+                    }
+                });
+            }
+
+            // resolve from trusted dns
+            {
+                let msg = Clone::clone(req);
+                let geoip = Clone::clone(&self.geoip);
+                tokio::spawn(async move {
+                    if let Some(msg) = Self::request(&msg, &trusted, &geoip, false).await {
+                        tx.send((false, msg)).await.ok();
+                    }
+                });
+            }
+
+            // let mut domain = SmallVec::<[u8; 64]>::new();
+            // for (i, b) in req.questions().next().unwrap().name().enumerate() {
+            //     if i != 0 {
+            //         domain.push(b'.');
+            //     }
+            //     domain.extend_from_slice(b);
+            // }
+
+            if let Some((china, msg)) = rx.recv().await {
+                // info!(
+                //     "{}: oversea={}",
+                //     String::from_utf8_lossy(&domain[..]),
+                //     !china
+                // );
+
+                res.replace(msg);
+            }
         }
 
-        let trusted = Clone::clone(&self.trusted);
-        {
-            let msg = Clone::clone(req);
-            let geoip = Clone::clone(&self.geoip);
-            tokio::spawn(async move {
-                if let Some(msg) = Self::request(&msg, &trusted, &geoip, false).await {
-                    tx.send((false, msg)).await.ok();
-                }
-            });
-        }
-
-        // let mut domain = SmallVec::<[u8; 64]>::new();
-        // for (i, b) in req.questions().next().unwrap().name().enumerate() {
-        //     if i != 0 {
-        //         domain.push(b'.');
-        //     }
-        //     domain.extend_from_slice(b);
-        // }
-
-        if let Some((china, msg)) = rx.recv().await {
-            // info!(
-            //     "{}: oversea={}",
-            //     String::from_utf8_lossy(&domain[..]),
-            //     !china
-            // );
-
-            res.replace(msg);
-        }
-
-        match &self.next {
-            Some(next) => next.handle(ctx, req, res).await,
-            None => Ok(()),
-        }
+        handle_next(self.next.as_deref(), ctx, req, res).await
     }
 
     fn set_next(&mut self, next: Box<dyn Filter>) {
