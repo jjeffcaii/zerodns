@@ -1,6 +1,6 @@
 [package]
 name = "zerodns"
-version = "0.1.0-alpha.5"
+version = "0.1.0-alpha.4"
 edition = "2021"
 license = "MIT"
 readme = "README.md"
