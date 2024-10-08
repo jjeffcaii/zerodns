@@ -1,5 +1,6 @@
+use futures::future::FutureExt;
 use std::collections::HashMap;
-
+use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -8,12 +9,35 @@ use smallvec::SmallVec;
 
 use config::{Filter as FilterConf, Rule as RuleConf};
 
-use crate::filter::{load as load_filter, FilterFactoryExt};
+use super::{FilteredHandler, Handler};
+use crate::filter::{load as load_filter, Context, Filter, FilterFactoryExt};
 use crate::handler::filtered::FilteredHandlerBuilder;
 use crate::protocol::Message;
 use crate::{config, Result};
 
-use super::{FilteredHandler, Handler};
+struct FilterFacade {
+    inner: Box<dyn Filter>,
+}
+
+#[async_trait]
+impl Filter for FilterFacade {
+    async fn handle(
+        &self,
+        ctx: &mut Context,
+        req: &mut Message,
+        res: &mut Option<Message>,
+    ) -> Result<()> {
+        let fut = self.inner.handle(ctx, req, res);
+        match AssertUnwindSafe(fut).catch_unwind().await {
+            Ok(r) => r,
+            Err(e) => bail!("invoke filter failed with panic: {:?}", e),
+        }
+    }
+
+    fn set_next(&mut self, next: Box<dyn Filter>) {
+        self.inner.set_next(next);
+    }
+}
 
 #[derive(Debug, Clone)]
 struct Rule {
@@ -111,32 +135,31 @@ impl RuledHandler {
     }
 
     fn get_rule(&self, req: &Message) -> Option<&Rule> {
-        let mut v = SmallVec::<[u8; 64]>::new();
-
-        use std::panic::{self, AssertUnwindSafe};
-
-        if let Err(e) = panic::catch_unwind(AssertUnwindSafe(|| {
-            for (i, next) in req.questions().next().unwrap().name().enumerate() {
+        if let Some(first) = req.questions().next() {
+            let mut v = SmallVec::<[u8; 64]>::new();
+            for (i, next) in first.name().enumerate() {
                 if i != 0 {
                     v.push(b'.');
                 }
                 v.extend_from_slice(next);
             }
-        })) {
-            error!("fuck: {:?}", e);
-            error!("fuck222: {}", hex::encode(req.as_ref()));
+
+            let domain = unsafe { std::str::from_utf8_unchecked(&v[..]) };
+
+            return self.rules.iter().find(|r| r.is_match(domain));
         }
 
-        let domain = unsafe { std::str::from_utf8_unchecked(&v[..]) };
-
-        self.rules.iter().find(|r| r.is_match(domain))
+        None
     }
 
     fn add_next_filter(&self, b: &mut FilteredHandlerBuilder, name: &String) -> Result<()> {
         if let Some(k) = self.filters.get(name) {
             match k {
                 FilterKind::Factory(factory) => {
-                    let f = factory.get_boxed()?;
+                    let f = {
+                        let f = factory.get_boxed()?;
+                        Box::new(FilterFacade { inner: f })
+                    };
                     b.append_boxed(f);
                 }
                 FilterKind::Chain(refs) => {

@@ -1,6 +1,5 @@
-use std::collections::VecDeque;
-
 use async_trait::async_trait;
+use std::collections::VecDeque;
 
 use crate::filter::{Context, Filter};
 use crate::handler::Handler;
@@ -58,7 +57,6 @@ impl FilteredHandlerBuilder {
                         Some(parent) => parent.set_next(next),
                     }
                 }
-
                 Some(FilteredHandler { filter: root })
             }
         }

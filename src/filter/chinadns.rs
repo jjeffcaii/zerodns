@@ -74,9 +74,7 @@ impl Filter for ChinaDNSFilter {
 
         let (tx, mut rx) = tokio::sync::mpsc::channel::<(bool, Message)>(1);
 
-        let trusted = Clone::clone(&self.trusted);
         let mistrusted = Clone::clone(&self.mistrusted);
-
         {
             let msg = Clone::clone(req);
             let geoip = Clone::clone(&self.geoip);
@@ -88,6 +86,7 @@ impl Filter for ChinaDNSFilter {
             });
         }
 
+        let trusted = Clone::clone(&self.trusted);
         {
             let msg = Clone::clone(req);
             let geoip = Clone::clone(&self.geoip);

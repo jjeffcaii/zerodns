@@ -1,5 +1,5 @@
 [server]
-listen = "127.0.0.1:5454"
+listen = "0.0.0.0:5454"
 cache_size = 1000
 
 [filters.alidns]
@@ -16,16 +16,6 @@ props.trusted = ["tcp://208.67.222.222:443", "tcp://208.67.220.220:443"]
 props.mistrusted = ["223.5.5.5", "223.6.6.6"]
 props.geoip_database = "GeoLite2-Country.mmdb"
 
-[filters.lua]
-kind = "lua"
-props.script = """
-function on_request(ctx,msg)
-  for i,v in ipairs(msg:questions()) do
-    print(i,v)
-  end
-end
-"""
-
 [[rules]]
 domain = "*.cn"
 filter = "alidns"
@@ -37,10 +27,6 @@ filter = "alidns"
 [[rules]]
 domain = "*google*"
 filter = "opendns"
-
-[[rules]]
-domain = "*"
-filter = "lua"
 
 [[rules]]
 domain = "*"
