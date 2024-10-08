@@ -103,17 +103,17 @@ filters = ["lua"]
 # RULE-2: for those domains of '*apple.com', use alidns filter
 [[rules]]
 domain = "*.apple.com"
-filter = "alidns"
+filters = ["alidns"]
 
 # RULE-3: for those domains of '*google*', use opendns filter
 [[rules]]
 domain = "*google*"
-filter = "opendns"
+filters = ["opendns"]
 
 # RULE-FINAL: use chinadns for others
 [[rules]]
 domain = "*"
-filter = "chinadns"
+filters = ["chinadns"]
 
 ##### RULES END #####
 
