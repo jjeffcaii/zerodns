@@ -1,16 +1,18 @@
-FROM rust:1.76-alpine as builder
+FROM rust:1.79 AS builder
+
 WORKDIR /usr/src/zerodns
+
 COPY . .
 
-RUN apk add musl-dev luajit-dev --no-cache
+RUN cargo build --release && \
+    cp target/release/zerodns /usr/local/cargo/bin/zerodns && \
+    cargo clean
 
-RUN cargo install --path .
-
-FROM alpine:3
+FROM ubuntu:jammy
 
 LABEL maintainer="jjeffcaii@outlook.com"
 
-RUN apk add luajit --no-cache
+VOLUME /etc/zerodns /var/log/zerodns
 
 COPY --from=builder /usr/local/cargo/bin/zerodns /usr/local/bin/zerodns
 
