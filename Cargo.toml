@@ -44,7 +44,7 @@ regex = "1.10.3"
 hex = "0.4.3"
 strum = { version = "0.26.1", default-features = false, features = ["strum_macros", "derive"] }
 strum_macros = "0.26.1"
-deadpool = "0.12.1"
+deadpool = "0.10.0"
 socket2 = "0.5.5"
 mlua = { version = "0.9.9", features = ["luajit", "vendored", "serialize", "async", "macros", "send", "parking_lot"] }
 
