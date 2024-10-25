@@ -201,7 +201,7 @@ mod tests {
 
     fn init() {
         pretty_env_logger::try_init_timed().ok();
-        crate::builtin::init();
+        crate::builtin::setup();
     }
 
     #[tokio::test]

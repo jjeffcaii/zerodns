@@ -2,8 +2,9 @@ use crate::filter::{
     register, ChinaDNSFilterFactory, LuaFilterFactory, NoopFilterFactory, Options,
     ProxyByFilterFactory,
 };
+use crate::logger::{self, Config as LoggerConfig};
 
-pub fn init() {
+pub fn setup() {
     register("noop", |opts: &Options| NoopFilterFactory::try_from(opts));
     register("proxyby", |opts: &Options| {
         ProxyByFilterFactory::try_from(opts)
@@ -12,6 +13,11 @@ pub fn init() {
         ChinaDNSFilterFactory::try_from(opts)
     });
     register("lua", |opts: &Options| LuaFilterFactory::try_from(opts))
+}
+
+pub fn setup_logger(c: &LoggerConfig) -> crate::Result<()> {
+    logger::init_global(c)?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -24,7 +30,7 @@ mod tests {
     fn test_init() {
         pretty_env_logger::try_init_timed().ok();
 
-        init();
+        setup();
 
         // noop
         {

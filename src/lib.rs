@@ -11,9 +11,9 @@
 ))]
 
 #[macro_use]
-extern crate cfg_if;
-#[macro_use]
 extern crate anyhow;
+#[macro_use]
+extern crate cfg_if;
 #[macro_use]
 extern crate log;
 
@@ -24,9 +24,10 @@ pub mod client;
 pub mod config;
 pub mod filter;
 pub mod handler;
+pub mod logger;
 pub mod protocol;
 pub mod server;
 
 pub type Result<T> = anyhow::Result<T>;
 
-pub use builtin::init;
+pub use builtin::{setup, setup_logger};

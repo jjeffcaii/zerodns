@@ -433,6 +433,27 @@ impl<'a> MessageBuilder<'a> {
         self
     }
 
+    pub fn answer<'b>(
+        mut self,
+        name: &'b str,
+        kind: Kind,
+        class: Class,
+        ttl: u32,
+        data: &'b [u8],
+    ) -> Self
+    where
+        'b: 'a,
+    {
+        self.answers.push(Answer {
+            name,
+            kind,
+            class,
+            ttl,
+            data,
+        });
+        self
+    }
+
     pub fn build(self) -> crate::Result<Message> {
         let Self {
             id,
@@ -470,8 +491,37 @@ impl<'a> MessageBuilder<'a> {
             b.put_u16(next.class as u16);
         }
 
+        // http://www.tcpipguide.com/free/t_DNSMessageResourceRecordFieldFormats-2.htm
         for next in answers {
-            // TODO: write answer
+            if !is_valid_domain(next.name) {
+                bail!("invalid answer name '{}'", next.name);
+            }
+            // name
+            {
+                for label in next
+                    .name
+                    .split('.')
+                    .filter(|it| !it.is_empty())
+                    .map(|it| it.as_bytes())
+                {
+                    b.put_u8(label.len() as u8);
+                    b.put_slice(label);
+                }
+                b.put_u8(0);
+            }
+
+            // type
+            b.put_u16(next.kind as u16);
+
+            // class
+            b.put_u16(next.class as u16);
+
+            // ttl
+            b.put_u32(next.ttl);
+
+            // rdata
+            b.put_u16(next.data.len() as u16);
+            b.put_slice(next.data);
         }
 
         for next in authorities {
@@ -794,6 +844,20 @@ impl RR<'_> {
         let n = self.name().len();
         let size = BigEndian::read_u16(&self.raw[self.offset + n + 8..]) as usize;
         n + 10 + size
+    }
+}
+
+impl Display for RR<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "name={}", self.name())?;
+        write!(f, "\tkind={}", self.kind())?;
+        write!(f, "\tclass={}", self.class())?;
+        write!(f, "\ttime_to_live={}", self.time_to_live())?;
+        match self.rdata() {
+            Ok(rdata) => write!(f, "\trdata={}", rdata)?,
+            Err(_) => write!(f, "\trdata=n/a")?,
+        }
+        Ok(())
     }
 }
 
@@ -1573,6 +1637,40 @@ mod tests {
                 .question("It's a bad domain", Kind::A, Class::IN)
                 .build();
             assert!(msg.is_err());
+        }
+    }
+
+    #[test]
+    fn test_message_builder_with_answer() {
+        init();
+
+        {
+            let flags = Flags::builder()
+                .response()
+                .recursive_available(true)
+                .recursive_query(true)
+                .build();
+            let msg = Message::builder()
+                .id(1234)
+                .flags(flags)
+                .answer("google.com.", Kind::A, Class::IN, 300, &[127, 0, 0, 1])
+                .build();
+
+            assert!(msg.is_ok_and(|msg| {
+                if msg.id() != 1234 {
+                    return false;
+                }
+
+                if msg.answer_count() != 1 {
+                    return false;
+                }
+
+                for next in msg.answers() {
+                    info!("next answer: {}", next);
+                }
+
+                true
+            }));
         }
     }
 

@@ -28,13 +28,19 @@ enum Commands {
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
-    pretty_env_logger::try_init_timed().ok();
-
-    zerodns::init();
-
     match Cli::parse().command {
         Commands::Run { config: path } => {
             let c = zerodns::config::read_from_toml(path)?;
+
+            match &c.logger {
+                Some(lc) => zerodns::setup_logger(lc)?,
+                None => {
+                    let lc = zerodns::logger::Config::default();
+                    zerodns::setup_logger(&lc)?;
+                }
+            }
+
+            zerodns::setup();
 
             let closer = Arc::new(Notify::new());
             let stopped = Arc::new(Notify::new());

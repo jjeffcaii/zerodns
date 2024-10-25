@@ -1,11 +1,13 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use crate::logger::Config as LoggerConfig;
 use serde::{Deserialize, Serialize};
 use toml::Value;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
+    pub logger: Option<LoggerConfig>,
     pub server: ServerConfig,
     pub filters: HashMap<String, Filter>,
     pub rules: Vec<Rule>,

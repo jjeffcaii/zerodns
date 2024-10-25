@@ -1,11 +1,13 @@
 use super::proto::Filter;
 use crate::client::request as resolve;
 use crate::filter::{handle_next, Context, FilterFactory, Options};
-use crate::protocol::{Flags, Message, DNS};
+use crate::protocol::{Class, Flags, Kind, Message, DNS};
 use async_trait::async_trait;
 use mlua::prelude::*;
 use mlua::{Function, Lua, UserData, UserDataMethods};
 use once_cell::sync::Lazy;
+use smallvec::SmallVec;
+use std::net::Ipv4Addr;
 use std::str::FromStr;
 use std::sync::Arc;
 use tokio::runtime;
@@ -145,6 +147,42 @@ impl UserData for LuaContext {
         methods.add_method("answer", |lua, this, msg: LuaMessage| {
             let resp = unsafe { this.2.as_mut().unwrap() };
             resp.replace(msg.0);
+            Ok(())
+        });
+        methods.add_method("answer_record_a", |lua, this, ipv4: LuaString| {
+            let req = unsafe { this.1.as_ref().unwrap() };
+            let resp = unsafe { this.2.as_mut().unwrap() };
+            let s = ipv4.to_string_lossy();
+            let ipv4 = Ipv4Addr::from_str(&s)?;
+
+            let flags = Flags::builder()
+                .response()
+                .recursive_query(true)
+                .recursive_available(true)
+                .build();
+
+            let mut v = SmallVec::<[u8; 256]>::new();
+            {
+                use std::io::Write;
+
+                if let Some(first) = req.questions().next() {
+                    write!(&mut v, "{}", first.name()).ok();
+                }
+            }
+
+            let name = unsafe { std::str::from_utf8_unchecked(&v[..]) };
+
+            let octets = ipv4.octets();
+
+            let msg = Message::builder()
+                .id(req.id())
+                .flags(flags)
+                .answer(name, Kind::A, Class::IN, 300, &octets[..])
+                .build()
+                .unwrap();
+
+            resp.replace(msg);
+
             Ok(())
         });
     }
