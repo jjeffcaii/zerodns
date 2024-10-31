@@ -1,14 +1,13 @@
+use futures::{SinkExt, StreamExt};
+use socket2::{Domain, Protocol, Type};
 use std::net::SocketAddr;
 use std::time::Duration;
-
-use async_trait::async_trait;
-use futures::{SinkExt, StreamExt};
 use tokio::net::UdpSocket;
 use tokio_util::codec::BytesCodec;
 use tokio_util::udp::UdpFramed;
 
 use crate::protocol::Message;
-use crate::Result;
+use crate::{Error as ZeroError, Result};
 
 use super::Client;
 
@@ -16,6 +15,7 @@ use super::Client;
 pub struct UdpClient {
     addr: SocketAddr,
     timeout: Duration,
+    source: Option<SocketAddr>,
 }
 
 impl UdpClient {
@@ -23,33 +23,56 @@ impl UdpClient {
         UdpClientBuilder {
             inner: Self {
                 addr,
-                timeout: Duration::from_secs(5),
+                timeout: Duration::from_secs(3),
+                source: None,
             },
         }
     }
 
+    #[inline]
     async fn request_(&self, req: &Message) -> Result<Message> {
-        let socket = UdpSocket::bind("0.0.0.0:0").await?;
+        let socket = {
+            let socket = socket2::Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
+            let source = match self.source {
+                Some(source) => {
+                    socket.set_reuse_address(true)?;
+                    socket.set_reuse_port(true)?;
+                    source
+                }
+                None => "0.0.0.0:0".parse::<SocketAddr>()?,
+            };
+            let addr = socket2::SockAddr::from(source);
+
+            socket
+                .bind(&addr)
+                .map_err(|e| ZeroError::NetworkBindFailure(source, e))?;
+
+            socket.set_nonblocking(true)?;
+
+            use std::os::fd::{FromRawFd, IntoRawFd, RawFd};
+            let fd: RawFd = socket.into_raw_fd();
+            let socket = unsafe { std::net::UdpSocket::from_raw_fd(fd) };
+
+            UdpSocket::from_std(socket)?
+        };
 
         let mut framed = UdpFramed::new(socket, BytesCodec::default());
 
         let bb = req.clone().0.freeze();
 
-        if let Err(e) = framed.send((bb, self.addr)).await {
-            return Err(e.into());
-        }
+        framed.send((bb, self.addr)).await?;
 
         match framed.next().await {
             Some(next) => {
                 let (b, _) = next?;
                 Ok(Message::from(b))
             }
-            None => bail!("no record resolved!"),
+            None => bail!(ZeroError::ResolveNothing),
         }
     }
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl Client for UdpClient {
     async fn request(&self, req: &Message) -> Result<Message> {
         tokio::time::timeout(self.timeout, self.request_(req)).await?
@@ -63,6 +86,11 @@ pub struct UdpClientBuilder {
 impl UdpClientBuilder {
     pub fn timeout(mut self, timeout: Duration) -> Self {
         self.inner.timeout = timeout;
+        self
+    }
+
+    pub fn source(mut self, source: SocketAddr) -> Self {
+        self.inner.source.replace(source);
         self
     }
 
@@ -90,6 +118,7 @@ mod tests {
 
         let c = UdpClient::builder("1.1.1.1:53".parse()?)
             .timeout(Duration::from_secs(5))
+            .source("0.0.0.0:5354".parse::<SocketAddr>()?)
             .build();
 
         let req = Message::builder()

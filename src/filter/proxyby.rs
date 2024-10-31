@@ -1,7 +1,7 @@
-use std::sync::Arc;
-
 use crate::client::request;
 use async_trait::async_trait;
+use std::sync::Arc;
+use std::time::Duration;
 
 use crate::filter::misc::OptionsReader;
 use crate::protocol::{Message, DNS};
@@ -25,7 +25,7 @@ impl Filter for ProxyByFilter {
     ) -> Result<()> {
         if res.is_none() {
             for dns in self.servers.iter() {
-                if let Ok(msg) = request(dns, req).await {
+                if let Ok(msg) = request(dns, req, Duration::from_secs(15)).await {
                     if log_enabled!(log::Level::Debug) {
                         for (i, question) in req.questions().enumerate() {
                             debug!(

@@ -11,17 +11,22 @@ use crate::handler::RuledHandler;
 use crate::server::{TcpServer, UdpServer};
 
 pub async fn run(c: Config, closer: Arc<Notify>) -> anyhow::Result<()> {
-    let mut rb = RuledHandler::builder();
+    let addr = c.server.listen.parse::<SocketAddr>()?;
 
-    for (k, v) in c.filters.iter() {
-        rb = rb.filter(k, v)?;
-    }
+    // build rule handler
+    let h = {
+        let mut rb = RuledHandler::builder();
 
-    for next in c.rules.iter() {
-        rb = rb.rule(next)?;
-    }
+        for (k, v) in c.filters.iter() {
+            rb = rb.filter(k, v)?;
+        }
 
-    let h = rb.build();
+        for next in c.rules.iter() {
+            rb = rb.rule(next)?;
+        }
+
+        rb.build()
+    };
 
     let cs = match &c.server.cache_size {
         None => None,
@@ -35,39 +40,39 @@ pub async fn run(c: Config, closer: Arc<Notify>) -> anyhow::Result<()> {
     };
 
     let udp_server = {
-        let addr = socket2::SockAddr::from(c.server.listen.parse::<SocketAddr>()?);
-        let socket = socket2::Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
+        let socket = {
+            let socket = socket2::Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
 
-        // SO_REUSEADDR+SO_REUSEPORT
-        if let Err(e) = socket.set_reuse_address(true) {
-            warn!("failed to set SO_REUSEADDR for {:?}: {:?}", &socket, e);
-        }
-        if let Err(e) = socket.set_reuse_port(true) {
-            warn!("failed to set SO_REUSEPORT for {:?}: {:?}", &socket, e);
-        }
+            // SO_REUSEADDR+SO_REUSEPORT
+            if let Err(e) = socket.set_reuse_address(true) {
+                warn!("failed to set SO_REUSEADDR for {:?}: {:?}", &socket, e);
+            }
+            if let Err(e) = socket.set_reuse_port(true) {
+                warn!("failed to set SO_REUSEPORT for {:?}: {:?}", &socket, e);
+            }
 
-        // enable balance for freebsd
-        cfg_if! {
-            if #[cfg(target_os="freebsd")]  {
-                // SO_REUSEPORT_LB
-                if let Err(e) = socket.set_reuse_port_lb(true) {
-                    warn!("failed to set SO_REUSEPORT for {:?}: {:?}", &socket, e);
+            // enable balance for freebsd
+            cfg_if! {
+                if #[cfg(target_os="freebsd")]  {
+                    // SO_REUSEPORT_LB
+                    if let Err(e) = socket.set_reuse_port_lb(true) {
+                        warn!("failed to set SO_REUSEPORT for {:?}: {:?}", &socket, e);
+                    }
                 }
             }
-        }
 
-        socket.set_recv_buffer_size(4096)?;
-        socket.set_send_buffer_size(4096)?;
-        socket.set_nonblocking(true)?;
+            socket.set_recv_buffer_size(4096)?;
+            socket.set_send_buffer_size(4096)?;
+            socket.set_nonblocking(true)?;
 
-        socket.bind(&addr)?;
+            let bind = socket2::SockAddr::from(addr);
+            socket.bind(&bind)?;
 
-        let socket = {
             use std::os::fd::{FromRawFd, IntoRawFd, RawFd};
             let fd: RawFd = socket.into_raw_fd();
             let socket = unsafe { std::net::UdpSocket::from_raw_fd(fd) };
-            UdpSocket::from_std(socket)
-        }?;
+            UdpSocket::from_std(socket)?
+        };
 
         UdpServer::new(
             socket,
@@ -78,27 +83,32 @@ pub async fn run(c: Config, closer: Arc<Notify>) -> anyhow::Result<()> {
     };
 
     let tcp_server = {
-        let addr = socket2::SockAddr::from(c.server.listen.parse::<SocketAddr>()?);
-        let socket = socket2::Socket::new(Domain::IPV4, Type::STREAM, Some(Protocol::TCP))?;
+        let socket = {
+            let addr = socket2::SockAddr::from(addr);
+            let socket = socket2::Socket::new(Domain::IPV4, Type::STREAM, Some(Protocol::TCP))?;
 
-        // SO_REUSEADDR+SO_REUSEPORT
-        if let Err(e) = socket.set_reuse_address(true) {
-            warn!("failed to set SO_REUSEADDR for {:?}: {:?}", &socket, e);
-        }
-        if let Err(e) = socket.set_reuse_port(true) {
-            warn!("failed to set SO_REUSEPORT for {:?}: {:?}", &socket, e);
-        }
+            // SO_REUSEADDR+SO_REUSEPORT
+            if let Err(e) = socket.set_reuse_address(true) {
+                warn!("failed to set SO_REUSEADDR for {:?}: {:?}", &socket, e);
+            }
+            if let Err(e) = socket.set_reuse_port(true) {
+                warn!("failed to set SO_REUSEPORT for {:?}: {:?}", &socket, e);
+            }
 
-        socket.set_recv_buffer_size(4096)?;
-        socket.set_send_buffer_size(4096)?;
-        socket.set_nonblocking(true)?;
-        socket.set_nodelay(true)?;
+            socket.set_recv_buffer_size(4096)?;
+            socket.set_send_buffer_size(4096)?;
+            socket.set_nonblocking(true)?;
+            socket.set_nodelay(true)?;
 
-        socket.bind(&addr)?;
+            socket.bind(&addr)?;
 
-        socket.listen(65535)?;
+            socket.listen(65535)?;
+
+            socket
+        };
 
         TcpServer::new(
+            addr,
             TcpListener::from_std(socket.into())?,
             Clone::clone(&h),
             Clone::clone(&cs),

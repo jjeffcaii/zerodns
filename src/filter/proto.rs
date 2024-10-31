@@ -1,12 +1,10 @@
-use async_trait::async_trait;
-
 use crate::protocol::Message;
 use crate::Result;
 
 #[derive(Debug, Default)]
 pub struct Context {}
 
-#[async_trait]
+#[async_trait::async_trait]
 pub trait Filter: Send + Sync + 'static {
     /// handle the request
     async fn handle(
@@ -40,7 +38,7 @@ mod tests {
     #[derive(Default)]
     struct AlwaysNoneFilter;
 
-    #[async_trait]
+    #[async_trait::async_trait]
     impl Filter for AlwaysNoneFilter {
         async fn handle(
             &self,

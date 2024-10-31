@@ -10,6 +10,7 @@ use smallvec::SmallVec;
 use std::net::Ipv4Addr;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::runtime;
 use tokio::sync::Mutex;
 
@@ -48,7 +49,7 @@ struct LuaJsonModule;
 impl UserData for LuaJsonModule {
     fn add_methods<'lua, M: LuaUserDataMethods<'lua, Self>>(methods: &mut M) {
         methods.add_method("encode", |lua, _, value: mlua::Value| {
-            let mut b = smallvec::SmallVec::<[u8; 512]>::new();
+            let mut b = SmallVec::<[u8; 512]>::new();
             serde_json::to_writer(&mut b, &value).map_err(LuaError::external)?;
             lua.create_string(&b[..])
         });
@@ -104,7 +105,7 @@ impl UserData for LuaMessage {
         });
 
         methods.add_method("tostring", |lua, this, ()| {
-            let mut b = smallvec::SmallVec::<[u8; 512]>::new();
+            let mut b = SmallVec::<[u8; 512]>::new();
             {
                 use std::io::Write;
                 write!(&mut b, ";; ANSWER SECTION:").ok();
@@ -273,7 +274,7 @@ impl TryFrom<&Options> for LuaFilterFactory {
         let script = val.as_str().ok_or_else(|| anyhow!("script not a string"))?;
 
         let vm = {
-            let vm = Lua::new();
+            let vm = unsafe { Lua::unsafe_new() };
 
             // create a lua method to resolve addr:
             //
@@ -291,7 +292,7 @@ impl TryFrom<&Options> for LuaFilterFactory {
                 // FIXME: How to call async method gracefully???
                 let (tx, rx) = std::sync::mpsc::channel();
                 RUNTIME.spawn(async move {
-                    let v = resolve(&dns, &req.0)
+                    let v = resolve(&dns, &req.0, Duration::from_secs(15))
                         .await
                         .map(LuaMessage)
                         .map_err(LuaError::external);

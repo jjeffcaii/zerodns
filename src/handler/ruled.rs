@@ -120,7 +120,7 @@ impl RuledHandlerBuilder {
     }
 }
 
-#[derive(Default, Clone)]
+#[derive(Clone)]
 pub(crate) struct RuledHandler {
     filters: Arc<HashMap<String, FilterKind, ahash::RandomState>>,
     rules: Arc<Vec<Rule>>,

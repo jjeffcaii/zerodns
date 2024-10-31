@@ -22,11 +22,14 @@ pub(crate) mod builtin;
 pub(crate) mod cache;
 pub mod client;
 pub mod config;
+pub(crate) mod error;
 pub mod filter;
 pub mod handler;
 pub mod logger;
 pub mod protocol;
 pub mod server;
+
+pub(crate) use error::Error;
 
 pub type Result<T> = anyhow::Result<T>;
 

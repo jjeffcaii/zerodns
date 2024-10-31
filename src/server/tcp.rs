@@ -8,7 +8,7 @@ use tokio_util::codec::{FramedRead, FramedWrite};
 
 use crate::cache::{CacheStore, CacheStoreExt};
 use crate::handler::Handler;
-use crate::protocol::Codec;
+use crate::protocol::{Codec, Flags, Message, RCode};
 use crate::Result;
 
 pub struct TcpServer<H, C> {
@@ -16,12 +16,20 @@ pub struct TcpServer<H, C> {
     listener: TcpListener,
     cache: Option<Arc<C>>,
     closer: Arc<Notify>,
+    addr: SocketAddr,
 }
 
 impl<H, C> TcpServer<H, C> {
-    pub fn new(listener: TcpListener, h: H, cache: Option<Arc<C>>, closer: Arc<Notify>) -> Self {
+    pub fn new(
+        addr: SocketAddr,
+        listener: TcpListener,
+        h: H,
+        cache: Option<Arc<C>>,
+        closer: Arc<Notify>,
+    ) -> Self {
         Self {
             h,
+            addr,
             listener,
             cache,
             closer,
@@ -36,6 +44,7 @@ where
 {
     pub async fn listen(self) -> Result<()> {
         let Self {
+            addr,
             h,
             listener,
             cache,
@@ -97,10 +106,22 @@ where
                 }
             }
 
-            let msg = handler
-                .handle(&mut req)
-                .await?
-                .expect("no record resolved!");
+            let res = handler.handle(&mut req).await?;
+
+            let msg = res.unwrap_or_else(|| {
+                let mut b = Flags::builder()
+                    .response()
+                    .opcode(req.flags().opcode())
+                    .rcode(RCode::NameError);
+                if req.flags().is_recursive_query() {
+                    b = b.recursive_query(true).recursive_available(true);
+                }
+                Message::builder()
+                    .id(req.id())
+                    .flags(b.build())
+                    .build()
+                    .unwrap()
+            });
 
             if let Some(cache) = &cache {
                 let id = req.id();
@@ -119,14 +140,13 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr;
-    use std::sync::atomic::{AtomicU64, Ordering};
-
+    use super::*;
     use crate::cache::InMemoryCache;
     use crate::client::request;
     use crate::protocol::{Message, DNS};
-
-    use super::*;
+    use std::str::FromStr;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::Duration;
 
     #[derive(Clone)]
     struct MockHandler {
@@ -153,8 +173,7 @@ mod tests {
         let req = {
             let raw = hex::decode(
                 "f2500120000100000000000105626169647503636f6d00000100010000291000000000000000",
-            )
-            .unwrap();
+            )?;
             Message::from(raw)
         };
 
@@ -171,12 +190,13 @@ mod tests {
         };
 
         let cs = Arc::new(InMemoryCache::builder().build());
+        let addr = "127.0.0.1:0".parse::<SocketAddr>()?;
 
-        let listener = TcpListener::bind("127.0.0.1:0").await?;
-        let port = listener.local_addr().unwrap().port();
+        let listener = TcpListener::bind(addr).await?;
+        let port = listener.local_addr()?.port();
         let closer = Arc::new(Notify::new());
 
-        let server = TcpServer::new(listener, h, Some(cs), Clone::clone(&closer));
+        let server = TcpServer::new(addr, listener, h, Some(cs), Clone::clone(&closer));
 
         tokio::spawn(async move {
             server.listen().await.expect("server stopped");
@@ -185,10 +205,14 @@ mod tests {
         let dns = DNS::from_str(&format!("tcp://127.0.0.1:{}", port))?;
 
         // no cache
-        assert!(request(&dns, &req).await.is_ok_and(|msg| &msg == &res));
+        assert!(request(&dns, &req, Duration::from_secs(3))
+            .await
+            .is_ok_and(|msg| &msg == &res));
 
         // use cache
-        assert!(request(&dns, &req).await.is_ok_and(|msg| &msg == &res));
+        assert!(request(&dns, &req, Duration::from_secs(3))
+            .await
+            .is_ok_and(|msg| &msg == &res));
 
         assert_eq!(
             1,

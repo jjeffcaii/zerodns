@@ -12,7 +12,7 @@ props.servers = ["tcp://208.67.222.222:443", "tcp://208.67.220.220:443"]
 
 [filters.chinadns]
 kind = "chinadns"
-props.trusted = ["tcp://208.67.222.222:443", "tcp://208.67.220.220:443"]
+props.trusted = ["dot://dot.pub", "tcp://208.67.222.222:443", "8.8.8.8", "1.1.1.1"]
 props.mistrusted = ["223.5.5.5", "223.6.6.6"]
 props.geoip_database = "GeoLite2-Country.mmdb"
 

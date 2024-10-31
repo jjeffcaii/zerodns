@@ -54,6 +54,9 @@ deadpool = "0.10.0"
 socket2 = "0.5.5"
 mlua = { version = "0.9.9", features = ["luajit", "vendored", "serialize", "async", "macros", "send", "parking_lot"] }
 garde = { version = "0.20.0", features = ["serde", "derive", "pattern", "regex"] }
+rustls = "0.23.16"
+webpki-roots = "0.26.6"
+tokio-rustls = "0.26.0"
 
 [dev-dependencies]
 hex = "0.4.3"

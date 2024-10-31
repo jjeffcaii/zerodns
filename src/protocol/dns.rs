@@ -8,8 +8,14 @@ use url::Url;
 pub enum DNS {
     UDP(SocketAddr),
     TCP(SocketAddr),
-    DoT(SocketAddr),
+    DoT(Host, u16),
     DoH(Url),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Host {
+    IpAddr(IpAddr),
+    Domain(String),
 }
 
 impl FromStr for DNS {
@@ -21,7 +27,7 @@ impl FromStr for DNS {
             IpAddr::V6(v6) => SocketAddr::V6(SocketAddrV6::new(v6, port, 0, 0)),
         };
 
-        if s.contains('/') {
+        if s.contains("://") {
             // schema://xxx/xxx
             let url = Url::parse(s)?;
             match url.scheme() {
@@ -39,6 +45,15 @@ impl FromStr for DNS {
                         return Ok(DNS::TCP(addr));
                     }
                 }
+                "dot" => {
+                    if let Some(host) = url.host_str() {
+                        let port = url.port().unwrap_or(853);
+                        if let Ok(ip) = host.parse::<IpAddr>() {
+                            return Ok(DNS::DoT(Host::IpAddr(ip), port));
+                        }
+                        return Ok(DNS::DoT(Host::Domain(host.to_string()), port));
+                    }
+                }
                 _ => (),
             }
         } else if s.contains(':') {
@@ -51,13 +66,14 @@ impl FromStr for DNS {
             return Ok(DNS::UDP(addr));
         }
 
-        bail!("invalid dns url '{}'", s)
+        bail!(crate::Error::InvalidDNSUrl(s.into()))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::IpAddr;
 
     fn init() {
         pretty_env_logger::try_init_timed().ok();
@@ -66,14 +82,35 @@ mod tests {
     #[test]
     fn test_from_str() {
         init();
+
+        let ip: IpAddr = "1.1.1.1".parse().unwrap();
+
         {
-            let dns = DNS::from_str("tcp://127.0.0.1:53");
+            let dns = DNS::from_str("tcp://1.1.1.1:53");
             assert!(dns.is_ok_and(|dns| matches!(dns, DNS::TCP(_))));
         }
 
         {
-            let dns = DNS::from_str("tcp://127.0.0.1");
+            let dns = DNS::from_str("tcp://1.1.1.1");
             assert!(dns.is_ok_and(|dns| matches!(dns, DNS::TCP(_))));
+        }
+
+        {
+            let dns = DNS::from_str("dot://1.1.1.1");
+            assert!(dns.is_ok_and(|dns| matches!(dns, DNS::DoT(Host::IpAddr(ip), 853))));
+        }
+
+        {
+            let dns = DNS::from_str("dot://1.1.1.1:8853");
+            let expect = DNS::DoT(Host::IpAddr(ip), 8853);
+            assert!(dns.is_ok_and(|dns| matches!(dns, expect)));
+        }
+
+        let domain = "one.one.one.one";
+        {
+            let dns = DNS::from_str("dot://one.one.one.one");
+            let expect = DNS::DoT(Host::Domain(domain.to_string()), 853);
+            assert!(dns.is_ok_and(|dns| matches!(dns, expect)));
         }
     }
 }

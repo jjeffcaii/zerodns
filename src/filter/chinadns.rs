@@ -1,10 +1,10 @@
-use std::net::{IpAddr, Ipv4Addr};
-use std::sync::Arc;
-
 use crate::client::request;
 use async_trait::async_trait;
 use maxminddb::Reader;
-
+use smallvec::SmallVec;
+use std::net::{IpAddr, Ipv4Addr};
+use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::mpsc;
 
 use crate::filter::misc::OptionsReader;
@@ -28,9 +28,9 @@ impl ChinaDNSFilter {
         all_china: bool,
     ) -> Option<Message> {
         for server in servers.iter() {
-            match request(server, req).await {
+            match request(server, req, Duration::from_secs(15)).await {
                 Ok(r) => {
-                    info!("query from {:?} ok", server);
+                    debug!("query from {:?} ok", server);
                     if all_china {
                         // reject answers of china ips
                         for next in r.answers().filter(|it| it.kind() == Kind::A) {
@@ -44,7 +44,23 @@ impl ChinaDNSFilter {
                     return Some(r);
                 }
                 Err(e) => {
-                    warn!("failed to query from {:?}: {:?}", server, e);
+                    let mut domain = SmallVec::<[u8; 64]>::new();
+
+                    if let Some(question) = req.questions().next() {
+                        for (i, b) in question.name().enumerate() {
+                            if i != 0 {
+                                domain.push(b'.');
+                            }
+                            domain.extend_from_slice(b);
+                        }
+                    }
+
+                    warn!(
+                        "failed to query '{}' from {:?}: {}",
+                        unsafe { std::str::from_utf8_unchecked(&domain[..]) },
+                        server,
+                        e
+                    );
                 }
             }
         }

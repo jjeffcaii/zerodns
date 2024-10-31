@@ -29,6 +29,7 @@ impl TcpClient {
         TcpClientBuilder {
             addr,
             timeout: Duration::from_secs(5),
+            source: None,
         }
     }
 
@@ -47,7 +48,7 @@ impl TcpClient {
 
         match r.next().await {
             Some(next) => next,
-            None => bail!("no record resolved!"),
+            None => bail!(crate::Error::ResolveNothing),
         }
     }
 }
@@ -76,6 +77,7 @@ impl Client for TcpClient {
 pub struct TcpClientBuilder {
     addr: SocketAddr,
     timeout: Duration,
+    source: Option<SocketAddr>,
 }
 
 impl TcpClientBuilder {
@@ -84,33 +86,50 @@ impl TcpClientBuilder {
         self
     }
 
+    pub fn source(mut self, source: SocketAddr) -> Self {
+        self.source.replace(source);
+        self
+    }
+
     pub fn build(self) -> Result<TcpClient> {
-        let Self { addr, timeout } = self;
-        let pool = get_pool(addr)?;
+        let Self {
+            addr,
+            timeout,
+            source,
+        } = self;
+        let pool = get_pool(addr, source)?;
 
         Ok(TcpClient { pool, timeout })
     }
 }
 
-fn get_pool(addr: SocketAddr) -> Result<Pool> {
-    static POOLS: Lazy<Arc<RwLock<HashMap<SocketAddr, Pool>>>> = Lazy::new(Default::default);
+fn get_pool(addr: SocketAddr, source: Option<SocketAddr>) -> Result<Pool> {
+    static POOLS: Lazy<Arc<RwLock<HashMap<(SocketAddr, Option<SocketAddr>), Pool>>>> =
+        Lazy::new(Default::default);
 
     let pools = POOLS.clone();
 
+    let key = (addr, source);
+
     {
         let r = pools.read();
-        if let Some(existing) = r.get(&addr) {
+        if let Some(existing) = r.get(&key) {
             return Ok(Clone::clone(existing));
         }
     }
 
     let mut w = pools.write();
-    if let Some(existing) = w.get(&addr) {
+    if let Some(existing) = w.get(&key) {
         return Ok(Clone::clone(existing));
     }
 
-    let pool = Pool::builder(Manager::from(addr)).max_size(8).build()?;
-    w.insert(addr, Clone::clone(&pool));
+    let mgr = Manager {
+        addr,
+        source,
+        lifetime: Duration::from_secs(60),
+    };
+    let pool = Pool::builder(mgr).max_size(8).build()?;
+    w.insert(key, Clone::clone(&pool));
 
     Ok(pool)
 }
@@ -119,12 +138,8 @@ type Pool = managed::Pool<Manager>;
 
 struct Manager {
     addr: SocketAddr,
-}
-
-impl From<SocketAddr> for Manager {
-    fn from(addr: SocketAddr) -> Self {
-        Self { addr }
-    }
+    source: Option<SocketAddr>,
+    lifetime: Duration,
 }
 
 #[async_trait]
@@ -133,18 +148,27 @@ impl managed::Manager for Manager {
     type Error = anyhow::Error;
 
     async fn create(&self) -> std::result::Result<Self::Type, Self::Error> {
-        let stream = {
-            let addr = SockAddr::from(self.addr);
+        let stream: std::net::TcpStream = {
+            let dst = SockAddr::from(self.addr);
 
             let socket = socket2::Socket::new(Domain::IPV4, Type::STREAM, Some(Protocol::TCP))?;
             socket.set_nodelay(true)?;
             socket.set_keepalive(true)?;
 
-            socket.connect_timeout(&addr, Duration::from_secs(1))?;
+            if let Some(source) = self.source {
+                socket.set_reuse_address(true)?;
+                socket.set_reuse_port(true)?;
+                let src = SockAddr::from(source);
+                socket
+                    .bind(&src)
+                    .map_err(|e| crate::Error::NetworkBindFailure(source, e))?;
+            }
 
-            let stream: std::net::TcpStream = socket.into();
-            stream.set_nonblocking(true)?;
-            stream
+            socket.connect(&dst)?;
+
+            socket.set_nonblocking(true)?;
+
+            socket.into()
         };
 
         let socket = TcpStream::from_std(stream)?;
@@ -152,7 +176,7 @@ impl managed::Manager for Manager {
     }
 
     async fn recycle(&self, obj: &mut Self::Type, metrics: &Metrics) -> RecycleResult<Self::Error> {
-        if metrics.created.elapsed() > Duration::from_secs(5 * 60) {
+        if metrics.created.elapsed() > self.lifetime {
             return Err(RecycleError::Backend(anyhow!("exceed max lifetime!")));
         }
 
@@ -164,7 +188,7 @@ impl managed::Manager for Manager {
             return Err(RecycleError::Backend(e));
         }
 
-        return Ok(());
+        Ok(())
     }
 }
 
@@ -220,7 +244,7 @@ mod tests {
     async fn test_request() -> Result<()> {
         init();
 
-        let c = TcpClient::builder("1.1.1.1:53".parse()?)
+        let c = TcpClient::builder("8.8.8.8:53".parse()?)
             .timeout(Duration::from_secs(5))
             .build()?;
 

@@ -1,10 +1,9 @@
-use async_trait::async_trait;
-use std::collections::VecDeque;
-
 use crate::filter::{Context, Filter};
 use crate::handler::Handler;
 use crate::protocol::Message;
 use crate::Result;
+use async_trait::async_trait;
+use std::collections::VecDeque;
 
 pub(crate) struct FilteredHandler {
     root: Box<dyn Filter>,

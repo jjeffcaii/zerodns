@@ -1,6 +1,7 @@
-use std::sync::Arc;
-
 use futures::StreamExt;
+use std::net::SocketAddr;
+use std::sync::Arc;
+use std::time::Instant;
 use tokio::net::UdpSocket;
 use tokio::sync::Notify;
 use tokio_util::codec::BytesCodec;
@@ -8,7 +9,7 @@ use tokio_util::udp::UdpFramed;
 
 use crate::cache::{CacheStore, CacheStoreExt};
 use crate::handler::Handler;
-use crate::protocol::Message;
+use crate::protocol::{Flags, Message, RCode};
 use crate::Result;
 
 pub struct UdpServer<H, C> {
@@ -19,9 +20,9 @@ pub struct UdpServer<H, C> {
 }
 
 impl<H, C> UdpServer<H, C> {
-    pub fn new(socket: UdpSocket, handler: H, cache: Option<Arc<C>>, closer: Arc<Notify>) -> Self {
+    pub fn new(socket: UdpSocket, h: H, cache: Option<Arc<C>>, closer: Arc<Notify>) -> Self {
         Self {
-            h: handler,
+            h,
             socket,
             cache,
             closer,
@@ -51,18 +52,95 @@ where
 
         let res = h.handle(&mut req).await?;
 
-        let msg = res.expect("no record resolved");
+        let mut cached = true;
 
-        if let Some(cache) = &cache {
-            let id = req.id();
-            req.set_id(0);
-            cache.set(&req, &msg).await;
-            req.set_id(id);
+        let msg = res.unwrap_or_else(|| {
+            cached = false;
+            let mut b = Flags::builder()
+                .response()
+                .opcode(req.flags().opcode())
+                .rcode(RCode::NameError);
+            if req.flags().is_recursive_query() {
+                b = b.recursive_query(true).recursive_available(true);
+            }
+            Message::builder()
+                .id(req.id())
+                .flags(b.build())
+                .build()
+                .unwrap()
+        });
 
-            debug!("set dns cache ok");
+        if cached {
+            if let Some(cache) = &cache {
+                let id = req.id();
+                req.set_id(0);
+                cache.set(&req, &msg).await;
+                req.set_id(id);
+
+                debug!("set dns cache ok");
+            }
         }
 
         Ok(msg)
+    }
+
+    async fn handle_request(
+        socket: Arc<UdpSocket>,
+        peer: SocketAddr,
+        req: Message,
+        h: Arc<H>,
+        cache: Option<Arc<C>>,
+    ) {
+        let rid = req.id();
+        let rflags = req.flags();
+
+        let begin = Instant::now();
+
+        let res = match Self::handle(req, h, cache).await {
+            Ok(res) => {
+                debug!(
+                    "handle request 0x{:04x} ok: cost={:.6}s",
+                    res.id(),
+                    begin.elapsed().as_secs_f32()
+                );
+                if res.answer_count() > 0 {
+                    for next in res.answers() {
+                        if let Ok(rdata) = next.rdata() {
+                            info!(
+                                "0x{:04x} <- {}.\t{}\t{:?}\t{:?}\t{}",
+                                res.id(),
+                                next.name(),
+                                next.time_to_live(),
+                                next.class(),
+                                next.kind(),
+                                rdata,
+                            );
+                        }
+                    }
+                }
+                res
+            }
+            Err(e) => {
+                error!("failed to handle dns request: {:?}", e);
+                let mut fb = Flags::builder()
+                    .response()
+                    .opcode(rflags.opcode())
+                    .rcode(RCode::ServerFailure);
+                if rflags.is_recursive_query() {
+                    fb = fb.recursive_query(true);
+                    fb = fb.recursive_available(true);
+                }
+                Message::builder()
+                    .id(rid)
+                    .flags(fb.build())
+                    .build()
+                    .expect("should build message ok")
+            }
+        };
+
+        if let Err(e) = socket.send_to(res.as_ref(), peer).await {
+            error!("failed to reply dns response: {:?}", e);
+        }
     }
 
     pub async fn listen(self) -> Result<()> {
@@ -83,8 +161,8 @@ where
         loop {
             tokio::select! {
                 recv = framed.next() => {
-                    match recv{
-                        Some(Ok((b,peer))) => {
+                    match recv {
+                        Some(Ok((b, peer))) => {
                             let req = Message::from(b);
                             let h = Clone::clone(&h);
                             let cache = Clone::clone(&cache);
@@ -92,37 +170,12 @@ where
 
                             if req.question_count() > 0 {
                                 for next in req.questions() {
-                                    info!("{}-0x{:04x} => {}.\t\t{:?}\t{:?}", &peer, req.id(), next.name(), next.class(), next.kind());
+                                    info!("0x{:04x} -> {}.\t\t{:?}\t{:?}", req.id(), next.name(), next.class(), next.kind());
                                 }
                             }
 
                             tokio::spawn(async move {
-                                match Self::handle(req, h, cache).await {
-                                    Ok(res) => {
-                                        if res.answer_count() > 0 {
-                                            for next in res.answers() {
-                                                if let Ok(rdata) = next.rdata(){
-                                                    info!(
-                                                        "{}-0x{:04x} <= {}.\t{}\t{:?}\t{:?}\t{}",
-                                                        &peer,
-                                                        res.id(),
-                                                        next.name(),
-                                                        next.time_to_live(),
-                                                        next.class(),
-                                                        next.kind(),
-                                                        rdata,
-                                                    );
-                                                }
-                                            }
-                                        }
-                                        if let Err(e) = socket.send_to(res.as_ref(), peer).await {
-                                            error!("failed to reply dns response: {:?}", e);
-                                        }
-                                    }
-                                    Err(e) => {
-                                        error!("failed to handle dns request: {:?}", e);
-                                    }
-                                }
+                                Self::handle_request(socket, peer, req, h, cache).await;
                             });
                         }
                         _ => {
@@ -143,12 +196,12 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr;
-    use std::sync::atomic::{AtomicU64, Ordering};
-
     use crate::cache::InMemoryCache;
     use crate::client::request;
     use crate::protocol::{Message, DNS};
+    use std::str::FromStr;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::Duration;
 
     use super::*;
 
@@ -177,13 +230,12 @@ mod tests {
         let req = {
             let raw = hex::decode(
                 "abe6010000010000000000000770616e63616b65056170706c6503636f6d0000410001",
-            )
-            .unwrap();
+            )?;
             Message::from(raw)
         };
 
         let res = {
-            let raw = hex::decode("abe6818000010003000000000770616e63616b65056170706c6503636f6d0000410001c00c000500010000000100220770616e63616b650963646e2d6170706c6503636f6d06616b61646e73036e657400c02f000500010000000100140770616e63616b650167076161706c696d67c01ac05d0041000100000001002a0001008000002368747470733a2f2f646f682e646e732e6170706c652e636f6d2f646e732d7175657279").unwrap();
+            let raw = hex::decode("abe6818000010003000000000770616e63616b65056170706c6503636f6d0000410001c00c000500010000000100220770616e63616b650963646e2d6170706c6503636f6d06616b61646e73036e657400c02f000500010000000100140770616e63616b650167076161706c696d67c01ac05d0041000100000001002a0001008000002368747470733a2f2f646f682e646e732e6170706c652e636f6d2f646e732d7175657279")?;
             Message::from(raw)
         };
 
@@ -196,7 +248,7 @@ mod tests {
 
         let cs = Arc::new(InMemoryCache::builder().build());
         let socket = UdpSocket::bind("127.0.0.1:5454").await?;
-        let port = socket.local_addr().unwrap().port();
+        let port = socket.local_addr()?.port();
         let closer = Arc::new(Notify::new());
 
         let server = UdpServer::new(socket, h, Some(cs), Clone::clone(&closer));
@@ -208,10 +260,14 @@ mod tests {
         let dns = DNS::from_str(&format!("127.0.0.1:{}", port))?;
 
         // no cache
-        assert!(request(&dns, &req).await.is_ok_and(|msg| &msg == &res));
+        assert!(request(&dns, &req, Duration::from_secs(3))
+            .await
+            .is_ok_and(|msg| &msg == &res));
 
         // use cache
-        assert!(request(&dns, &req).await.is_ok_and(|msg| &msg == &res));
+        assert!(request(&dns, &req, Duration::from_secs(3))
+            .await
+            .is_ok_and(|msg| &msg == &res));
 
         assert_eq!(
             1,
