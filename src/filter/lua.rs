@@ -331,7 +331,7 @@ mod tests {
         init();
 
         let script = r#"
-            local dns = '223.5.5.5'
+            local dns = '8.8.8.8'
 
             function handle(ctx)
               logger:info('--- begin to resolve from '..dns)

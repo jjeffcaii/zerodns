@@ -1,14 +1,11 @@
+use std::fmt::{Display, Formatter};
 use std::net::SocketAddr;
-use std::sync::Arc;
 use std::time::Duration;
 
-use ahash::HashMap;
+use crate::misc::tcp;
 use async_trait::async_trait;
-use deadpool::managed::{self, Metrics, RecycleError, RecycleResult};
 use futures::{SinkExt, StreamExt};
 use once_cell::sync::Lazy;
-use parking_lot::RwLock;
-use socket2::{Domain, Protocol, SockAddr, Type};
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 use tokio_util::codec::{FramedRead, FramedWrite};
@@ -18,9 +15,40 @@ use crate::Result;
 
 use super::Client;
 
+/*
+[filters.opendns]
+kind = "proxyby"
+props.servers = ["tcp://208.67.222.222:443", "tcp://208.67.220.220:443"]
+
+ */
+
+static OPENDNS: Lazy<TcpClient> = Lazy::new(|| {
+    TcpClient::builder("208.67.222.222:443".parse().unwrap())
+        .build()
+        .unwrap()
+});
+
+static GOOGLE: Lazy<TcpClient> = Lazy::new(|| {
+    TcpClient::builder("8.8.8.8:53".parse().unwrap())
+        .build()
+        .unwrap()
+});
+
+static ALIYUN: Lazy<TcpClient> = Lazy::new(|| {
+    TcpClient::builder("223.5.5.5:53".parse().unwrap())
+        .build()
+        .unwrap()
+});
+
+static CLOUDFLARE: Lazy<TcpClient> = Lazy::new(|| {
+    TcpClient::builder("1.1.1.1:53".parse().unwrap())
+        .build()
+        .unwrap()
+});
+
 #[derive(Clone)]
 pub struct TcpClient {
-    pool: Pool,
+    pool: tcp::Pool,
     timeout: Duration,
 }
 
@@ -31,6 +59,22 @@ impl TcpClient {
             timeout: Duration::from_secs(5),
             source: None,
         }
+    }
+
+    pub fn google() -> Self {
+        Clone::clone(&*GOOGLE)
+    }
+
+    pub fn opendns() -> Self {
+        Clone::clone(&*OPENDNS)
+    }
+
+    pub fn aliyun() -> Self {
+        Clone::clone(&*ALIYUN)
+    }
+
+    pub fn cloudflare() -> Self {
+        Clone::clone(&*CLOUDFLARE)
     }
 
     async fn request_with_socket(&self, req: &Message, socket: &mut TcpStream) -> Result<Message> {
@@ -50,6 +94,14 @@ impl TcpClient {
             Some(next) => next,
             None => bail!(crate::Error::ResolveNothing),
         }
+    }
+}
+
+impl Display for TcpClient {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let key = self.pool.manager().key();
+        write!(f, "tcp://{}", key.0)?;
+        Ok(())
     }
 }
 
@@ -97,142 +149,15 @@ impl TcpClientBuilder {
             timeout,
             source,
         } = self;
-        let pool = get_pool(addr, source)?;
+        let pool = tcp::get((addr, source))?;
 
         Ok(TcpClient { pool, timeout })
     }
 }
 
-fn get_pool(addr: SocketAddr, source: Option<SocketAddr>) -> Result<Pool> {
-    static POOLS: Lazy<Arc<RwLock<HashMap<(SocketAddr, Option<SocketAddr>), Pool>>>> =
-        Lazy::new(Default::default);
-
-    let pools = POOLS.clone();
-
-    let key = (addr, source);
-
-    {
-        let r = pools.read();
-        if let Some(existing) = r.get(&key) {
-            return Ok(Clone::clone(existing));
-        }
-    }
-
-    let mut w = pools.write();
-    if let Some(existing) = w.get(&key) {
-        return Ok(Clone::clone(existing));
-    }
-
-    let mgr = Manager {
-        addr,
-        source,
-        lifetime: Duration::from_secs(60),
-    };
-    let pool = Pool::builder(mgr).max_size(8).build()?;
-    w.insert(key, Clone::clone(&pool));
-
-    Ok(pool)
-}
-
-type Pool = managed::Pool<Manager>;
-
-struct Manager {
-    addr: SocketAddr,
-    source: Option<SocketAddr>,
-    lifetime: Duration,
-}
-
-#[async_trait]
-impl managed::Manager for Manager {
-    type Type = (u32, TcpStream);
-    type Error = anyhow::Error;
-
-    async fn create(&self) -> std::result::Result<Self::Type, Self::Error> {
-        let stream: std::net::TcpStream = {
-            let dst = SockAddr::from(self.addr);
-
-            let socket = socket2::Socket::new(Domain::IPV4, Type::STREAM, Some(Protocol::TCP))?;
-            socket.set_nodelay(true)?;
-            socket.set_keepalive(true)?;
-
-            if let Some(source) = self.source {
-                socket.set_reuse_address(true)?;
-                socket.set_reuse_port(true)?;
-                let src = SockAddr::from(source);
-                socket
-                    .bind(&src)
-                    .map_err(|e| crate::Error::NetworkBindFailure(source, e))?;
-            }
-
-            socket.connect(&dst)?;
-
-            socket.set_nonblocking(true)?;
-
-            socket.into()
-        };
-
-        let socket = TcpStream::from_std(stream)?;
-        Ok((0, socket))
-    }
-
-    async fn recycle(&self, obj: &mut Self::Type, metrics: &Metrics) -> RecycleResult<Self::Error> {
-        if metrics.created.elapsed() > self.lifetime {
-            return Err(RecycleError::Backend(anyhow!("exceed max lifetime!")));
-        }
-
-        if obj.0 != 0 {
-            return Err(RecycleError::Backend(anyhow!("invalid connection!")));
-        }
-
-        if let Err(e) = validate(&obj.1) {
-            return Err(RecycleError::Backend(e));
-        }
-
-        Ok(())
-    }
-}
-
-#[inline]
-pub(crate) fn validate(conn: &TcpStream) -> Result<()> {
-    use std::io::ErrorKind::WouldBlock;
-    let mut b = [0u8; 0];
-    // check if connection is readable
-    match conn.try_read(&mut b) {
-        Ok(n) => {
-            if n == 0 {
-                debug!("connection {:?} is closed", conn.local_addr());
-            } else {
-                warn!(
-                    "invalid connection {:?}: should not read any bytes",
-                    conn.local_addr()
-                );
-            }
-            bail!("invalid connection")
-        }
-        Err(ref e) if e.kind() == WouldBlock => {
-            // check if connection is writeable
-            if let Err(e) = conn.try_write(&b[..]) {
-                if e.kind() != WouldBlock {
-                    debug!(
-                        "connection {:?} is not writeable: {:?}",
-                        conn.local_addr(),
-                        e
-                    );
-                    bail!("invalid connection");
-                }
-            }
-            Ok(())
-        }
-        Err(e) => {
-            error!("broken connection {:?}: {:?}", conn.local_addr(), e);
-            bail!("invalid connection");
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use crate::protocol::{Class, Flags, Kind};
+    use crate::protocol::*;
 
     use super::*;
 
@@ -244,32 +169,38 @@ mod tests {
     async fn test_request() -> Result<()> {
         init();
 
-        let c = TcpClient::builder("8.8.8.8:53".parse()?)
-            .timeout(Duration::from_secs(5))
-            .build()?;
+        for c in [
+            TcpClient::google(),
+            TcpClient::opendns(),
+            TcpClient::aliyun(),
+            TcpClient::cloudflare(),
+        ] {
+            for question in ["www.youtube.com", "www.taobao.com", "x.com"] {
+                info!("======= resolve {} from {} =======", question, &c);
 
-        for _ in 0..3 {
-            let req = Message::builder()
-                .id(0x1234)
-                .flags(Flags::builder().request().recursive_query(true).build())
-                .question("www.youtube.com", Kind::A, Class::IN)
-                .build()?;
-            let res = c.request(&req).await;
+                let req = Message::builder()
+                    .id(0x1234)
+                    .flags(Flags::builder().request().recursive_query(true).build())
+                    .question(question, Kind::A, Class::IN)
+                    .build()?;
+                let res = c.request(&req).await;
 
-            assert!(res.is_ok_and(|msg| {
-                for next in msg.answers() {
-                    info!(
-                        "{}.\t{}\t{:?}\t{:?}\t{}",
-                        next.name(),
-                        next.time_to_live(),
-                        next.class(),
-                        next.kind(),
-                        next.rdata().unwrap()
-                    );
-                }
-                msg.answer_count() > 0
-            }));
+                assert!(res.is_ok_and(|msg| {
+                    for next in msg.answers() {
+                        info!(
+                            "{}.\t{}\t{:?}\t{:?}\t{}",
+                            next.name(),
+                            next.time_to_live(),
+                            next.class(),
+                            next.kind(),
+                            next.rdata().unwrap()
+                        );
+                    }
+                    msg.answer_count() > 0
+                }));
+            }
         }
+
         Ok(())
     }
 }

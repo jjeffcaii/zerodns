@@ -26,6 +26,7 @@ pub(crate) mod error;
 pub mod filter;
 pub mod handler;
 pub mod logger;
+pub(crate) mod misc;
 pub mod protocol;
 pub mod server;
 

@@ -54,6 +54,13 @@ impl FromStr for DNS {
                         return Ok(DNS::DoT(Host::Domain(host.to_string()), port));
                     }
                 }
+                "doh" => {
+                    let s2 = s.replacen("doh://", "https://", 1);
+                    return Ok(DNS::DoH(Url::parse(&s2)?));
+                }
+                "https" | "http" => {
+                    return Ok(DNS::DoH(url));
+                }
                 _ => (),
             }
         } else if s.contains(':') {
@@ -111,6 +118,16 @@ mod tests {
             let dns = DNS::from_str("dot://one.one.one.one");
             let expect = DNS::DoT(Host::Domain(domain.to_string()), 853);
             assert!(dns.is_ok_and(|dns| matches!(dns, expect)));
+        }
+
+        {
+            let dns = DNS::from_str("doh://dns.google/dns-query");
+            assert!(dns.is_ok_and(|dns| matches!(dns, DNS::DoH(_))));
+        }
+
+        {
+            let dns = DNS::from_str("https://dns.google/dns-query");
+            assert!(dns.is_ok_and(|dns| matches!(dns, DNS::DoH(_))));
         }
     }
 }

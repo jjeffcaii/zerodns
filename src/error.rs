@@ -19,6 +19,9 @@ pub(crate) enum Error {
     #[error("cannot bind address {0}: {1}")]
     NetworkBindFailure(SocketAddr, io::Error),
 
+    #[error("network failure: {0}")]
+    NetworkFailure(io::Error),
+
     #[error("resolve returns nothing")]
     ResolveNothing,
 

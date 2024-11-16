@@ -1,35 +1,83 @@
 use super::Client;
+use crate::misc::tls;
 use crate::protocol::{Codec, Message};
 use crate::Result;
 
-use ahash::HashMap;
-use deadpool::managed;
-use deadpool::managed::{Metrics, RecycleError, RecycleResult};
 use futures::{SinkExt, StreamExt};
 use once_cell::sync::Lazy;
-use parking_lot::RwLock;
-use rustls::pki_types::ServerName;
-use rustls::RootCertStore;
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
-use tokio_rustls::{client::TlsStream, TlsConnector};
+use tokio_rustls::client::TlsStream;
 use tokio_util::codec::{FramedRead, FramedWrite};
 
+const DEFAULT_DOT_PORT: u16 = 853;
+
+static GOOGLE: Lazy<DoTClient> = Lazy::new(|| {
+    let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)), DEFAULT_DOT_PORT);
+    DoTClient::builder(addr)
+        .sni("dns.google")
+        .build()
+        .expect("Cannot build Google DoT client!")
+});
+
+static CLOUDFLARE: Lazy<DoTClient> = Lazy::new(|| {
+    let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1)), DEFAULT_DOT_PORT);
+    DoTClient::builder(addr)
+        .sni("one.one.one.one")
+        .build()
+        .expect("Cannot build Cloudflare DoT client!")
+});
+
+static DNSPOD: Lazy<DoTClient> = Lazy::new(|| {
+    let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(1, 12, 12, 12)), DEFAULT_DOT_PORT);
+    DoTClient::builder(addr)
+        .sni("dot.pub")
+        .build()
+        .expect("Cannot build DNSPod DoT client!")
+});
+
+static ALIYUN: Lazy<DoTClient> = Lazy::new(|| {
+    let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(223, 5, 5, 5)), DEFAULT_DOT_PORT);
+    DoTClient::builder(addr)
+        .sni("dns.alidns.com")
+        .build()
+        .expect("Cannot build Aliyun DoT client!")
+});
+
+// https://www.rfc-editor.org/rfc/rfc7858.txt
 #[derive(Clone)]
 pub struct DoTClient {
-    pool: Pool,
+    pool: tls::Pool,
     timeout: Duration,
 }
 
 impl DoTClient {
+    pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
+
+    pub fn google() -> Self {
+        Clone::clone(&GOOGLE)
+    }
+
+    pub fn dnspod() -> Self {
+        Clone::clone(&DNSPOD)
+    }
+
+    pub fn cloudflare() -> Self {
+        Clone::clone(&CLOUDFLARE)
+    }
+
+    pub fn aliyun() -> Self {
+        Clone::clone(&ALIYUN)
+    }
+
     pub fn builder(addr: SocketAddr) -> DoTClientBuilder {
         DoTClientBuilder {
             sni: None,
             addr,
-            timeout: Duration::from_secs(5),
+            timeout: Self::DEFAULT_TIMEOUT,
         }
     }
 
@@ -112,90 +160,9 @@ impl DoTClientBuilder {
             Some(sni) => (Arc::new(sni), addr),
         };
 
-        let pool = get_pool(key)?;
+        let pool = tls::get(key)?;
         Ok(DoTClient { pool, timeout })
     }
-}
-
-type Pool = managed::Pool<Manager>;
-
-struct Manager {
-    key: Key,
-    lifetime: Duration,
-}
-
-#[async_trait::async_trait]
-impl managed::Manager for Manager {
-    type Type = (u32, TlsStream<TcpStream>);
-    type Error = anyhow::Error;
-
-    async fn create(&self) -> std::result::Result<Self::Type, Self::Error> {
-        let root_store = RootCertStore {
-            roots: webpki_roots::TLS_SERVER_ROOTS.into(),
-        };
-        let config = rustls::ClientConfig::builder()
-            .with_root_certificates(root_store)
-            .with_no_client_auth();
-
-        let connector = TlsConnector::from(Arc::new(config));
-        let dnsname = ServerName::try_from(self.key.0.to_string())?;
-
-        let stream = TcpStream::connect(self.key.1).await?;
-        let stream = connector.connect(dnsname, stream).await?;
-
-        Ok((0, stream))
-    }
-
-    async fn recycle(&self, obj: &mut Self::Type, metrics: &Metrics) -> RecycleResult<Self::Error> {
-        if metrics.created.elapsed() > self.lifetime {
-            return Err(RecycleError::Backend(anyhow!("exceed max lifetime!")));
-        }
-
-        if obj.0 != 0 {
-            return Err(RecycleError::Backend(anyhow!("invalid connection!")));
-        }
-
-        if let Err(e) = validate(&obj.1) {
-            return Err(RecycleError::Backend(e));
-        }
-
-        Ok(())
-    }
-}
-
-#[inline]
-fn validate(stream: &TlsStream<TcpStream>) -> Result<()> {
-    let (c, _) = stream.get_ref();
-    super::tcp::validate(c)
-}
-
-type Key = (Arc<String>, SocketAddr);
-
-fn get_pool(key: Key) -> Result<Pool> {
-    static POOLS: Lazy<Arc<RwLock<HashMap<Key, Pool>>>> = Lazy::new(Default::default);
-
-    let pools = POOLS.clone();
-
-    {
-        let r = pools.read();
-        if let Some(existing) = r.get(&key) {
-            return Ok(Clone::clone(existing));
-        }
-    }
-
-    let mut w = pools.write();
-    if let Some(existing) = w.get(&key) {
-        return Ok(Clone::clone(existing));
-    }
-
-    let mgr = Manager {
-        key: Clone::clone(&key),
-        lifetime: Duration::from_secs(60),
-    };
-    let pool = Pool::builder(mgr).max_size(8).build()?;
-    w.insert(key, Clone::clone(&pool));
-
-    Ok(pool)
 }
 
 #[cfg(test)]
@@ -218,9 +185,7 @@ mod tests {
         //     timeout: None,
         // };
 
-        let c = DoTClient::builder("162.14.21.178:853".parse()?)
-            .sni("dot.pub")
-            .build()?;
+        let c = DoTClient::google();
 
         for _ in 0..3 {
             let req = Message::builder()

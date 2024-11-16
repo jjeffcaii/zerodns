@@ -15,7 +15,7 @@ a DNS server in Rust, which is inspired from chinadns/dnsmasq.
 
 ## Goals
 
-- multiple protocols: UDP/TCP/DoT/DoT/DNSCrypt
+- multiple protocols: UDP/TCP/DoT/DoH
 - user-defined filters, includes lua or native rust codes
 
 ## Quick Start

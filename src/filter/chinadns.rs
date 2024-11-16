@@ -212,8 +212,8 @@ mod tests {
 
         let opts = toml::from_str::<Options>(
             r#"
-        trusted = ["tcp://199.85.126.10","tcp://199.85.127.10"]
-        mistrusted = ["223.5.5.5","223.6.6.6"]
+        trusted = ["tcp://8.8.8.8"]
+        mistrusted = ["223.5.5.5"]
         geoip_database = "GeoLite2-Country.mmdb"
         "#,
         )?;

@@ -6,13 +6,17 @@ cache_size = 1000
 kind = "proxyby"
 props.servers = ["223.5.5.5", "223.6.6.6"]
 
+[filters.cloudflare]
+kind = "proxyby"
+props.servers = ["doh://1.1.1.1"]
+
 [filters.opendns]
 kind = "proxyby"
 props.servers = ["tcp://208.67.222.222:443", "tcp://208.67.220.220:443"]
 
 [filters.chinadns]
 kind = "chinadns"
-props.trusted = ["dot://dot.pub", "tcp://208.67.222.222:443", "8.8.8.8", "1.1.1.1"]
+props.trusted = ["doh://dns.google", "dot://dot.pub"]
 props.mistrusted = ["223.5.5.5", "223.6.6.6"]
 props.geoip_database = "GeoLite2-Country.mmdb"
 
@@ -51,6 +55,10 @@ filters = ["alidns"]
 [[rules]]
 domain = "*google*"
 filters = ["opendns"]
+
+[[rules]]
+domain = "*youtube*"
+filters = ["cloudflare"]
 
 [[rules]]
 domain = "*"
