@@ -35,56 +35,39 @@ pub async fn request(dns: &DNS, request: &Message, timeout: Duration) -> Result<
             let c = TcpClient::builder(*addr).timeout(timeout).build()?;
             c.request(request).await
         }
-        DNS::DoT(host, port) => match host {
-            Host::IpAddr(ip) => {
-                let addr = SocketAddr::new(*ip, *port);
-                let c = DoTClient::builder(addr).timeout(timeout).build()?;
+        DNS::DoT(addr) => match addr {
+            Address::SocketAddr(addr) => {
+                let c = DoTClient::builder(*addr).timeout(timeout).build()?;
                 c.request(request).await
             }
-            Host::Domain(domain) => {
-                let (ip, _) = lookup(domain, timeout).await?;
-
-                let addr = SocketAddr::new(IpAddr::V4(ip), *port);
-
+            Address::HostAddr(host_addr) => {
+                let domain = &host_addr.host;
+                let ip = lookup(domain, timeout).await?;
+                let addr = SocketAddr::new(IpAddr::V4(ip), host_addr.port);
                 let c = DoTClient::builder(addr)
-                    .sni(domain)
+                    .sni(domain.as_ref())
                     .timeout(timeout)
                     .build()?;
                 c.request(request).await
             }
         },
-        DNS::DoH(url) => {
-            let dc = {
-                let (https, mut port) = match url.scheme() {
-                    "https" => (true, 443u16),
-                    "http" => (false, 80u16),
-                    _ => unreachable!(),
-                };
+        DNS::DoH(doh_addr) => {
+            let dc = match &doh_addr.addr {
+                Address::SocketAddr(addr) => DoHClient::builder(*addr).https(doh_addr.https),
+                Address::HostAddr(addr) => {
+                    let domain = &addr.host;
+                    let ip = lookup(domain, timeout).await?;
+                    let mut bu = DoHClient::builder(SocketAddr::new(IpAddr::V4(ip), addr.port))
+                        .host(domain)
+                        .https(doh_addr.https);
 
-                if let Some(port_) = url.port() {
-                    port = port_;
-                }
-
-                let host = url
-                    .host_str()
-                    .ok_or_else(|| crate::Error::InvalidDNSUrl(url.to_string()))?;
-                let (ip, resolved) = lookup(host, timeout).await?;
-
-                let addr = SocketAddr::new(IpAddr::V4(ip), port);
-
-                let mut bu = DoHClient::builder(addr).https(https);
-                match url.path() {
-                    "" | "/" | DoHClient::DEFAULT_PATH => (),
-                    other => {
-                        bu = bu.path(other);
+                    if let Some(path) = &doh_addr.path {
+                        bu = bu.path(path);
                     }
+                    bu
                 }
-
-                if resolved {
-                    bu = bu.host(host);
-                }
-                bu.build()
-            };
+            }
+            .build();
 
             dc.request(request).await
         }
@@ -100,10 +83,7 @@ where
 }
 
 #[inline]
-async fn lookup(host: &str, timeout: Duration) -> Result<(Ipv4Addr, bool)> {
-    if let Ok(addr) = host.parse::<Ipv4Addr>() {
-        return Ok((addr, false));
-    }
+async fn lookup(host: &str, timeout: Duration) -> Result<Ipv4Addr> {
     // TODO: add cache
     let flags = Flags::builder()
         .request()
@@ -125,7 +105,7 @@ async fn lookup(host: &str, timeout: Duration) -> Result<(Ipv4Addr, bool)> {
 
     for next in v.answers() {
         if let Ok(RData::A(a)) = next.rdata() {
-            return Ok((a.ipaddr(), true));
+            return Ok(a.ipaddr());
         }
     }
 

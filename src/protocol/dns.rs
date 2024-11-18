@@ -1,6 +1,7 @@
+use crate::cachestr::Cachestr;
+use std::fmt::{Display, Formatter};
 use std::net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::str::FromStr;
-
 use url::Url;
 
 #[allow(clippy::upper_case_acronyms)]
@@ -8,14 +9,71 @@ use url::Url;
 pub enum DNS {
     UDP(SocketAddr),
     TCP(SocketAddr),
-    DoT(Host, u16),
-    DoH(Url),
+    DoT(Address),
+    DoH(DoHAddress),
+}
+
+impl Display for DNS {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DNS::UDP(addr) => write!(f, "udp://{}", addr),
+            DNS::TCP(addr) => write!(f, "tcp://{}", addr),
+            DNS::DoT(addr) => write!(f, "dot://{}", addr),
+            DNS::DoH(addr) => write!(f, "doh+{}", addr),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum Host {
-    IpAddr(IpAddr),
-    Domain(String),
+pub struct HostAddr {
+    pub host: Cachestr,
+    pub port: u16,
+}
+
+impl Display for HostAddr {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}:{}", self.host, self.port)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Address {
+    SocketAddr(SocketAddr),
+    HostAddr(HostAddr),
+}
+
+impl Display for Address {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Address::SocketAddr(addr) => write!(f, "{}", addr),
+            Address::HostAddr(addr) => write!(f, "{}", addr),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct DoHAddress {
+    pub addr: Address,
+    pub path: Option<Cachestr>,
+    pub https: bool,
+}
+
+impl Display for DoHAddress {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        if self.https {
+            write!(f, "https://")?;
+        } else {
+            write!(f, "http://")?;
+        }
+
+        write!(f, "{}", &self.addr)?;
+
+        if let Some(path) = &self.path {
+            write!(f, "{}", path)?;
+        }
+
+        Ok(())
+    }
 }
 
 impl FromStr for DNS {
@@ -30,6 +88,27 @@ impl FromStr for DNS {
         if s.contains("://") {
             // schema://xxx/xxx
             let url = Url::parse(s)?;
+
+            let extract_addr = |default_port: u16| match url.host_str() {
+                Some(host) => {
+                    let addr = {
+                        let port = url.port().unwrap_or(default_port);
+                        match host.parse::<IpAddr>() {
+                            Ok(ip) => Address::SocketAddr(SocketAddr::new(ip, port)),
+                            _ => {
+                                let ha = HostAddr {
+                                    host: Cachestr::from(host),
+                                    port,
+                                };
+                                Address::HostAddr(ha)
+                            }
+                        }
+                    };
+                    Some(addr)
+                }
+                None => None,
+            };
+
             match url.scheme() {
                 "udp" => {
                     if let Some(host) = url.host_str() {
@@ -46,20 +125,35 @@ impl FromStr for DNS {
                     }
                 }
                 "dot" => {
-                    if let Some(host) = url.host_str() {
-                        let port = url.port().unwrap_or(853);
-                        if let Ok(ip) = host.parse::<IpAddr>() {
-                            return Ok(DNS::DoT(Host::IpAddr(ip), port));
-                        }
-                        return Ok(DNS::DoT(Host::Domain(host.to_string()), port));
+                    if let Some(addr) = extract_addr(853) {
+                        return Ok(DNS::DoT(addr));
                     }
                 }
-                "doh" => {
-                    let s2 = s.replacen("doh://", "https://", 1);
-                    return Ok(DNS::DoH(Url::parse(&s2)?));
+                "doh" | "https" => {
+                    if let Some(addr) = extract_addr(443) {
+                        let path = match url.path() {
+                            "" | "/" => None,
+                            other => Some(Cachestr::from(other)),
+                        };
+                        return Ok(DNS::DoH(DoHAddress {
+                            addr,
+                            path,
+                            https: true,
+                        }));
+                    }
                 }
-                "https" | "http" => {
-                    return Ok(DNS::DoH(url));
+                "http" => {
+                    if let Some(addr) = extract_addr(80) {
+                        let path = match url.path() {
+                            "" | "/" => None,
+                            other => Some(Cachestr::from(other)),
+                        };
+                        return Ok(DNS::DoH(DoHAddress {
+                            addr,
+                            path,
+                            https: false,
+                        }));
+                    }
                 }
                 _ => (),
             }
@@ -80,7 +174,6 @@ impl FromStr for DNS {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::net::IpAddr;
 
     fn init() {
         pretty_env_logger::try_init_timed().ok();
@@ -90,44 +183,26 @@ mod tests {
     fn test_from_str() {
         init();
 
-        let ip: IpAddr = "1.1.1.1".parse().unwrap();
-
-        {
-            let dns = DNS::from_str("tcp://1.1.1.1:53");
-            assert!(dns.is_ok_and(|dns| matches!(dns, DNS::TCP(_))));
-        }
-
-        {
-            let dns = DNS::from_str("tcp://1.1.1.1");
-            assert!(dns.is_ok_and(|dns| matches!(dns, DNS::TCP(_))));
-        }
-
-        {
-            let dns = DNS::from_str("dot://1.1.1.1");
-            assert!(dns.is_ok_and(|dns| matches!(dns, DNS::DoT(Host::IpAddr(ip), 853))));
-        }
-
-        {
-            let dns = DNS::from_str("dot://1.1.1.1:8853");
-            let expect = DNS::DoT(Host::IpAddr(ip), 8853);
-            assert!(dns.is_ok_and(|dns| matches!(dns, expect)));
-        }
-
-        let domain = "one.one.one.one";
-        {
-            let dns = DNS::from_str("dot://one.one.one.one");
-            let expect = DNS::DoT(Host::Domain(domain.to_string()), 853);
-            assert!(dns.is_ok_and(|dns| matches!(dns, expect)));
-        }
-
-        {
-            let dns = DNS::from_str("doh://dns.google/dns-query");
-            assert!(dns.is_ok_and(|dns| matches!(dns, DNS::DoH(_))));
-        }
-
-        {
-            let dns = DNS::from_str("https://dns.google/dns-query");
-            assert!(dns.is_ok_and(|dns| matches!(dns, DNS::DoH(_))));
+        for (input, expect) in [
+            ("1.1.1.1", "udp://1.1.1.1:53"),
+            ("udp://1.1.1.1", "udp://1.1.1.1:53"),
+            ("tcp://1.1.1.1", "tcp://1.1.1.1:53"),
+            ("dot://1.1.1.1", "dot://1.1.1.1:853"),
+            ("dot://one.one.one.one", "dot://one.one.one.one:853"),
+            ("doh://dns.google", "doh+https://dns.google.com:443"),
+            (
+                "doh://dns.google/dns-query",
+                "doh+https://dns.google.com:443/dns-query",
+            ),
+            ("doh://1.1.1.1", "doh+https://1.1.1.1"),
+            ("http://1.2.3.4", "doh+http://1.2.3.4:80"),
+            ("https://1.1.1.1", "doh+http://1.1.1.1:443"),
+        ] {
+            let actual = DNS::from_str(input);
+            assert!(actual.is_ok_and(|dns| {
+                let disp = dns.to_string();
+                matches!(&disp, expect)
+            }));
         }
     }
 }

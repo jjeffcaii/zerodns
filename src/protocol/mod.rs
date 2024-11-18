@@ -2,6 +2,6 @@ mod dns;
 mod frame;
 mod tcp;
 
-pub use dns::{Host, DNS};
+pub use dns::*;
 pub use frame::*;
 pub(crate) use tcp::Codec;

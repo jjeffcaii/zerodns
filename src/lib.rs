@@ -17,6 +17,11 @@ extern crate cfg_if;
 #[macro_use]
 extern crate log;
 
+/// cached string
+pub mod cachestr {
+    include!(concat!(env!("OUT_DIR"), "/cachestr.rs"));
+}
+
 pub mod bootstrap;
 pub(crate) mod builtin;
 pub(crate) mod cache;
