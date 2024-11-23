@@ -1,6 +1,6 @@
 [server]
 listen = "0.0.0.0:5454"
-cache_size = 1000
+cache_size = 5000
 
 [filters.alidns]
 kind = "proxyby"
@@ -19,6 +19,10 @@ kind = "chinadns"
 props.trusted = ["doh://dns.google", "dot://dot.pub"]
 props.mistrusted = ["223.5.5.5", "223.6.6.6"]
 props.geoip_database = "GeoLite2-Country.mmdb"
+
+[filters.custom]
+kind = "hosts"
+props.hosts = { "one.one.one.one" = ["1.1.1.1", "1.0.0.1"], "dns.alidns.com." = "223.5.5.5" }
 
 [filters.lua]
 kind = "lua"
@@ -62,4 +66,4 @@ filters = ["cloudflare"]
 
 [[rules]]
 domain = "*"
-filters = ["chinadns"]
+filters = ["custom", "chinadns"]

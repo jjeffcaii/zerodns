@@ -76,86 +76,100 @@ impl Display for DoHAddress {
     }
 }
 
+impl DNS {
+    #[inline(always)]
+    fn from_host_port(host: IpAddr, port: u16) -> SocketAddr {
+        match host {
+            IpAddr::V4(v4) => SocketAddr::V4(SocketAddrV4::new(v4, port)),
+            IpAddr::V6(v6) => SocketAddr::V6(SocketAddrV6::new(v6, port, 0, 0)),
+        }
+    }
+
+    #[inline(always)]
+    fn parse_as_url(url: Url) -> Option<Self> {
+        let extract_addr = |default_port: u16| match url.host_str() {
+            Some(host) => {
+                let addr = {
+                    let port = url.port().unwrap_or(default_port);
+                    match host.parse::<IpAddr>() {
+                        Ok(ip) => Address::SocketAddr(SocketAddr::new(ip, port)),
+                        _ => {
+                            let ha = HostAddr {
+                                host: Cachestr::from(host),
+                                port,
+                            };
+                            Address::HostAddr(ha)
+                        }
+                    }
+                };
+                Some(addr)
+            }
+            None => None,
+        };
+
+        match url.scheme() {
+            "udp" => {
+                if let Some(host) = url.host_str() {
+                    if let Ok(ip) = host.parse::<IpAddr>() {
+                        let addr = Self::from_host_port(ip, url.port().unwrap_or(53));
+                        return Some(DNS::UDP(addr));
+                    }
+                }
+            }
+            "tcp" => {
+                if let Some(host) = url.host_str() {
+                    if let Ok(ip) = host.parse::<IpAddr>() {
+                        let addr = Self::from_host_port(ip, url.port().unwrap_or(53));
+                        return Some(DNS::TCP(addr));
+                    }
+                }
+            }
+            "dot" => {
+                if let Some(addr) = extract_addr(853) {
+                    return Some(DNS::DoT(addr));
+                }
+            }
+            "doh" | "doh+https" | "https" => {
+                if let Some(addr) = extract_addr(443) {
+                    let path = match url.path() {
+                        "" | "/" => None,
+                        other => Some(Cachestr::from(other)),
+                    };
+                    return Some(DNS::DoH(DoHAddress {
+                        addr,
+                        path,
+                        https: true,
+                    }));
+                }
+            }
+            "doh+http" | "http" => {
+                if let Some(addr) = extract_addr(80) {
+                    let path = match url.path() {
+                        "" | "/" => None,
+                        other => Some(Cachestr::from(other)),
+                    };
+                    return Some(DNS::DoH(DoHAddress {
+                        addr,
+                        path,
+                        https: false,
+                    }));
+                }
+            }
+            _ => (),
+        }
+        None
+    }
+}
+
 impl FromStr for DNS {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let from_host_port = |host: IpAddr, port: u16| match host {
-            IpAddr::V4(v4) => SocketAddr::V4(SocketAddrV4::new(v4, port)),
-            IpAddr::V6(v6) => SocketAddr::V6(SocketAddrV6::new(v6, port, 0, 0)),
-        };
-
         if s.contains("://") {
-            // schema://xxx/xxx
-            let url = Url::parse(s)?;
-
-            let extract_addr = |default_port: u16| match url.host_str() {
-                Some(host) => {
-                    let addr = {
-                        let port = url.port().unwrap_or(default_port);
-                        match host.parse::<IpAddr>() {
-                            Ok(ip) => Address::SocketAddr(SocketAddr::new(ip, port)),
-                            _ => {
-                                let ha = HostAddr {
-                                    host: Cachestr::from(host),
-                                    port,
-                                };
-                                Address::HostAddr(ha)
-                            }
-                        }
-                    };
-                    Some(addr)
+            if let Ok(url) = s.parse::<Url>() {
+                if let Some(dns) = Self::parse_as_url(url) {
+                    return Ok(dns);
                 }
-                None => None,
-            };
-
-            match url.scheme() {
-                "udp" => {
-                    if let Some(host) = url.host_str() {
-                        let ip = host.parse::<IpAddr>()?;
-                        let addr = from_host_port(ip, url.port().unwrap_or(53));
-                        return Ok(DNS::UDP(addr));
-                    }
-                }
-                "tcp" => {
-                    if let Some(host) = url.host_str() {
-                        let ip = host.parse::<IpAddr>()?;
-                        let addr = from_host_port(ip, url.port().unwrap_or(53));
-                        return Ok(DNS::TCP(addr));
-                    }
-                }
-                "dot" => {
-                    if let Some(addr) = extract_addr(853) {
-                        return Ok(DNS::DoT(addr));
-                    }
-                }
-                "doh" | "https" => {
-                    if let Some(addr) = extract_addr(443) {
-                        let path = match url.path() {
-                            "" | "/" => None,
-                            other => Some(Cachestr::from(other)),
-                        };
-                        return Ok(DNS::DoH(DoHAddress {
-                            addr,
-                            path,
-                            https: true,
-                        }));
-                    }
-                }
-                "http" => {
-                    if let Some(addr) = extract_addr(80) {
-                        let path = match url.path() {
-                            "" | "/" => None,
-                            other => Some(Cachestr::from(other)),
-                        };
-                        return Ok(DNS::DoH(DoHAddress {
-                            addr,
-                            path,
-                            https: false,
-                        }));
-                    }
-                }
-                _ => (),
             }
         } else if s.contains(':') {
             // host:port
@@ -163,8 +177,7 @@ impl FromStr for DNS {
             return Ok(DNS::UDP(addr));
         } else {
             let ip = IpAddr::from_str(s)?;
-            let addr = from_host_port(ip, 53);
-            return Ok(DNS::UDP(addr));
+            return Ok(DNS::UDP(SocketAddr::new(ip, 53)));
         }
 
         bail!(crate::Error::InvalidDNSUrl(s.into()))
@@ -197,8 +210,9 @@ mod tests {
             ("doh://1.1.1.1", "doh+https://1.1.1.1"),
             ("http://1.2.3.4", "doh+http://1.2.3.4:80"),
             ("https://1.1.1.1", "doh+http://1.1.1.1:443"),
+            ("doh+https://1.1.1.1", "doh+https://1.1.1.1"),
         ] {
-            let actual = DNS::from_str(input);
+            let actual = input.parse::<DNS>();
             assert!(actual.is_ok_and(|dns| {
                 let disp = dns.to_string();
                 matches!(&disp, expect)

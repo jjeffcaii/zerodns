@@ -1,6 +1,6 @@
 use crate::filter::{
-    register, ChinaDNSFilterFactory, LuaFilterFactory, NoopFilterFactory, Options,
-    ProxyByFilterFactory,
+    register, ChinaDNSFilterFactory, HostsFilterFactory, LuaFilterFactory, NoopFilterFactory,
+    Options, ProxyByFilterFactory,
 };
 use crate::logger::{self, Config as LoggerConfig};
 
@@ -12,7 +12,8 @@ pub fn setup() {
     register("chinadns", |opts: &Options| {
         ChinaDNSFilterFactory::try_from(opts)
     });
-    register("lua", |opts: &Options| LuaFilterFactory::try_from(opts))
+    register("lua", |opts: &Options| LuaFilterFactory::try_from(opts));
+    register("hosts", |opts: &Options| HostsFilterFactory::try_from(opts));
 }
 
 pub fn setup_logger(c: &LoggerConfig) -> crate::Result<()> {

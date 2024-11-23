@@ -709,6 +709,18 @@ impl Question<'_> {
     }
 }
 
+impl<'a> Display for Question<'a> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        for next in self.name() {
+            write!(f, "{}.", unsafe { std::str::from_utf8_unchecked(next) })?;
+        }
+        write!(f, "\t{}", self.class())?;
+        write!(f, "\t{}", self.kind())?;
+
+        Ok(())
+    }
+}
+
 struct RRIter<'a> {
     raw: &'a [u8],
     offset: usize,

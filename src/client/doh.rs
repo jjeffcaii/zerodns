@@ -169,7 +169,7 @@ impl DoHClient {
 
         // TODO: handle HTTP/1.1 keepalive
 
-        info!("receive DoH response: {:?}", &res);
+        debug!("receive DoH response: {:?}", &res);
 
         if !res.status().is_success() {
             bail!(NetworkFailure(io::Error::new(

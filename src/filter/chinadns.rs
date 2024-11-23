@@ -117,21 +117,7 @@ impl Filter for ChinaDNSFilter {
                 });
             }
 
-            // let mut domain = SmallVec::<[u8; 64]>::new();
-            // for (i, b) in req.questions().next().unwrap().name().enumerate() {
-            //     if i != 0 {
-            //         domain.push(b'.');
-            //     }
-            //     domain.extend_from_slice(b);
-            // }
-
             if let Some((china, msg)) = rx.recv().await {
-                // info!(
-                //     "{}: oversea={}",
-                //     String::from_utf8_lossy(&domain[..]),
-                //     !china
-                // );
-
                 res.replace(msg);
             }
         }
