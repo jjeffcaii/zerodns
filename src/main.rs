@@ -208,8 +208,12 @@ fn print_resolve_result(
 }
 
 async fn subcommand_run(sm: &ArgMatches) -> anyhow::Result<()> {
-    let path = sm.get_one::<PathBuf>("config").unwrap();
-    let c = zerodns::config::read_from_toml(path)?;
+    let path = {
+        let path = sm.get_one::<String>("config").unwrap();
+        PathBuf::from(path)
+    };
+
+    let c = zerodns::config::read_from_toml(&path)?;
 
     match &c.logger {
         Some(lc) => zerodns::setup_logger(lc)?,
