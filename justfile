@@ -1,9 +1,14 @@
 #!/usr/bin/env just --justfile
 
 alias r := run
+alias i := install
+alias l := lint
 
 release:
   @cargo build --release
+
+install:
+    @cargo install --path .
 
 lint:
   @cargo clippy

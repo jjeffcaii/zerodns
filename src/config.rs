@@ -32,7 +32,7 @@ pub struct Rule {
     pub filters: Vec<String>,
 }
 
-pub fn read_from_toml(pt: PathBuf) -> anyhow::Result<Config> {
+pub fn read_from_toml(pt: &PathBuf) -> anyhow::Result<Config> {
     let b = std::fs::read(pt)?;
     let s = String::from_utf8(b)?;
     let c: Config = toml::from_str(&s)?;
@@ -46,7 +46,7 @@ mod tests {
     #[test]
     fn test_read_from_toml() {
         let pt = PathBuf::from("config.toml");
-        let c = read_from_toml(pt);
+        let c = read_from_toml(&pt);
 
         assert!(c.is_ok_and(|c| {
             !c.server.listen.is_empty() && !c.rules.is_empty() && !c.filters.is_empty()

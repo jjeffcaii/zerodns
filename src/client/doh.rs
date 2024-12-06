@@ -1,6 +1,6 @@
 use super::Client;
 use crate::misc::http::{SimpleHttp1Codec, CRLF};
-use crate::protocol::Message;
+use crate::protocol::{Message, DEFAULT_HTTP_PORT, DEFAULT_TLS_PORT};
 use futures::StreamExt;
 use once_cell::sync::Lazy;
 use smallvec::{smallvec, SmallVec};
@@ -94,7 +94,7 @@ impl DoHClient {
     pub const DEFAULT_PATH: &'static str = "/dns-query";
 
     pub fn builder<'a>(addr: SocketAddr) -> DoHClientBuilder<'a> {
-        let https = addr.port() == 443;
+        let https = addr.port() == DEFAULT_TLS_PORT;
         DoHClientBuilder {
             https,
             addr,
@@ -186,12 +186,12 @@ impl DoHClient {
 impl Display for DoHClient {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         if self.https {
-            if self.addr.port() == 443 {
+            if self.addr.port() == DEFAULT_TLS_PORT {
                 write!(f, "doh+https://{}", self.addr.ip())?;
             } else {
                 write!(f, "doh+https://{}", self.addr)?;
             }
-        } else if self.addr.port() == 80 {
+        } else if self.addr.port() == DEFAULT_HTTP_PORT {
             write!(f, "doh+http://{}", self.addr.ip())?;
         } else {
             write!(f, "doh+http://{}", self.addr)?;

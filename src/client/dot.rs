@@ -1,6 +1,6 @@
 use super::Client;
 use crate::misc::tls;
-use crate::protocol::{Codec, Message};
+use crate::protocol::{Codec, Message, DEFAULT_DOT_PORT};
 use crate::Result;
 
 use futures::{SinkExt, StreamExt};
@@ -12,8 +12,6 @@ use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 use tokio_rustls::client::TlsStream;
 use tokio_util::codec::{FramedRead, FramedWrite};
-
-const DEFAULT_DOT_PORT: u16 = 853;
 
 static GOOGLE: Lazy<DoTClient> = Lazy::new(|| {
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)), DEFAULT_DOT_PORT);

@@ -40,3 +40,8 @@ pub(crate) use error::Error;
 pub type Result<T> = anyhow::Result<T>;
 
 pub use builtin::{setup, setup_logger};
+
+pub use misc::resolvconf::read as read_resolvconf;
+
+pub const DEFAULT_RESOLV_CONF_PATH: &str = "/etc/resolv.conf";
+pub const DEFAULT_UDP_PORT: u16 = 53;

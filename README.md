@@ -20,6 +20,27 @@ a DNS server in Rust, which is inspired from chinadns/dnsmasq.
 
 ## Quick Start
 
+### Client-Side
+
+ZeroDNS provides similar functionality to dig, but supports more DNS protocols. Here are some examples:
+
+```shell
+$ # Simple resolve, will read dns server from /etc/resolv.conf
+$ zerodns resolve www.youtube.com
+$ # Use short output, similar with 'dig +short ...'
+$ zerodns resolve --short www.youtube.com
+$ # Resolve over google TCP
+$ zerodns resolve -s tcp://8.8.8.8 www.youtube.com
+$ # Resolve over google DoT
+$ zerodns resolve -s dot://dns.google www.youtube.com
+$ # Resolve over cloudflare DoH
+$ zerodns resolve -s doh://1.1.1.1 www.youtube.com
+$ # Resolve MX records
+$ zerodns resolve -t mx gmail.com
+```
+
+### Server-Side
+
 > Notice: ensure you have [just](https://github.com/casey/just) installed on your machine!
 
 run an example:
@@ -29,7 +50,7 @@ $ just r
 $ dig @127.0.0.1 -p5454 www.youtube.com
 ```
 
-## Configuration
+#### Configuration
 
 Here's an example configuration file:
 
@@ -118,3 +139,7 @@ filters = ["chinadns"]
 ##### RULES END #####
 
 ```
+
+### Client API
+
+// TODO

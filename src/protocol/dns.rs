@@ -4,6 +4,12 @@ use std::net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::str::FromStr;
 use url::Url;
 
+pub const DEFAULT_UDP_PORT: u16 = 53;
+pub const DEFAULT_TCP_PORT: u16 = 53;
+pub const DEFAULT_DOT_PORT: u16 = 853;
+pub const DEFAULT_HTTP_PORT: u16 = 80;
+pub const DEFAULT_TLS_PORT: u16 = 443;
+
 #[allow(clippy::upper_case_acronyms)]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum DNS {
@@ -111,7 +117,7 @@ impl DNS {
             "udp" => {
                 if let Some(host) = url.host_str() {
                     if let Ok(ip) = host.parse::<IpAddr>() {
-                        let addr = Self::from_host_port(ip, url.port().unwrap_or(53));
+                        let addr = Self::from_host_port(ip, url.port().unwrap_or(DEFAULT_UDP_PORT));
                         return Some(DNS::UDP(addr));
                     }
                 }
@@ -119,18 +125,18 @@ impl DNS {
             "tcp" => {
                 if let Some(host) = url.host_str() {
                     if let Ok(ip) = host.parse::<IpAddr>() {
-                        let addr = Self::from_host_port(ip, url.port().unwrap_or(53));
+                        let addr = Self::from_host_port(ip, url.port().unwrap_or(DEFAULT_TCP_PORT));
                         return Some(DNS::TCP(addr));
                     }
                 }
             }
             "dot" => {
-                if let Some(addr) = extract_addr(853) {
+                if let Some(addr) = extract_addr(DEFAULT_DOT_PORT) {
                     return Some(DNS::DoT(addr));
                 }
             }
             "doh" | "doh+https" | "https" => {
-                if let Some(addr) = extract_addr(443) {
+                if let Some(addr) = extract_addr(DEFAULT_TLS_PORT) {
                     let path = match url.path() {
                         "" | "/" => None,
                         other => Some(Cachestr::from(other)),
@@ -143,7 +149,7 @@ impl DNS {
                 }
             }
             "doh+http" | "http" => {
-                if let Some(addr) = extract_addr(80) {
+                if let Some(addr) = extract_addr(DEFAULT_HTTP_PORT) {
                     let path = match url.path() {
                         "" | "/" => None,
                         other => Some(Cachestr::from(other)),
@@ -177,7 +183,7 @@ impl FromStr for DNS {
             return Ok(DNS::UDP(addr));
         } else {
             let ip = IpAddr::from_str(s)?;
-            return Ok(DNS::UDP(SocketAddr::new(ip, 53)));
+            return Ok(DNS::UDP(SocketAddr::new(ip, DEFAULT_UDP_PORT)));
         }
 
         bail!(crate::Error::InvalidDNSUrl(s.into()))

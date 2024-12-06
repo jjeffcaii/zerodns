@@ -1,29 +1,32 @@
 use std::fmt::{Debug, Display, Formatter};
 use std::net::{Ipv4Addr, Ipv6Addr};
 
-use ahash::HashMap;
 use byteorder::{BigEndian, ByteOrder};
 use bytes::{BufMut, Bytes, BytesMut};
+use clap::builder::PossibleValue;
+use clap::ValueEnum;
+use hashbrown::HashMap;
 use once_cell::sync::Lazy;
-use regex::Regex;
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 
 macro_rules! parse_u16 {
     ($name:ident) => {
-        impl $name {
-            pub fn parse_u16(code: u16) -> Option<$name> {
+        impl TryFrom<u16> for $name {
+            type Error = ();
+
+            fn try_from(value: u16) -> Result<Self, Self::Error> {
                 static IDX: Lazy<HashMap<u16, $name>> = Lazy::new(|| {
-                    let mut m = HashMap::with_capacity_and_hasher(
-                        $name::iter().len(),
-                        ahash::RandomState::default(),
-                    );
+                    let mut m = HashMap::with_capacity($name::iter().len());
                     $name::iter().for_each(|next| {
                         m.insert(next as u16, next);
                     });
                     m
                 });
-                IDX.get(&code).cloned()
+                if let Some(c) = IDX.get(&value).cloned() {
+                    return Ok(c);
+                }
+                Err(())
             }
         }
     };
@@ -157,6 +160,120 @@ pub enum Kind {
     OPT = 41,
 }
 
+impl ValueEnum for Kind {
+    fn value_variants<'a>() -> &'a [Self] {
+        &[
+            Self::A,
+            Self::AAAA,
+            Self::AFSDB,
+            Self::APL,
+            Self::CAA,
+            Self::CDNSKEY,
+            Self::CDS,
+            Self::CERT,
+            Self::CNAME,
+            Self::CSYNC,
+            Self::DHCID,
+            Self::DLV,
+            Self::DNAME,
+            Self::DNSKEY,
+            Self::DS,
+            Self::EUI48,
+            Self::EUI64,
+            Self::HINFO,
+            Self::HIP,
+            Self::HTTPS,
+            Self::IPSECKEY,
+            Self::KEY,
+            Self::KX,
+            Self::LOC,
+            Self::MX,
+            Self::NAPTR,
+            Self::NS,
+            Self::NSEC,
+            Self::NSEC3,
+            Self::NSEC3PARAM,
+            Self::OPENPGPKEY,
+            Self::PTR,
+            Self::RRSIG,
+            Self::RP,
+            Self::SIG,
+            Self::SMIMEA,
+            Self::SOA,
+            Self::SRV,
+            Self::SSHFP,
+            Self::SVCB,
+            Self::TA,
+            Self::TKEY,
+            Self::TLSA,
+            Self::TSIG,
+            Self::TXT,
+            Self::URI,
+            Self::ZONEMD,
+            Self::ANY,
+            Self::AXFR,
+            Self::IXFR,
+            Self::OPT,
+        ]
+    }
+
+    fn to_possible_value(&self) -> Option<PossibleValue> {
+        Some(match self {
+            Self::A => PossibleValue::new("a").help("Type A"),
+            Self::AAAA => PossibleValue::new("aaaa").help("Type AAAA"),
+            Self::AFSDB => PossibleValue::new("afsdb").help("Type AFSDB"),
+            Self::APL => PossibleValue::new("apl").help("Type APL"),
+            Self::CAA => PossibleValue::new("caa").help("Type CAA"),
+            Self::CDNSKEY => PossibleValue::new("cdnskey").help("Type CDNSKEY"),
+            Self::CDS => PossibleValue::new("cds").help("Type CDS"),
+            Self::CERT => PossibleValue::new("cert").help("Type CERT"),
+            Self::CNAME => PossibleValue::new("cname").help("Type CNAME"),
+            Self::CSYNC => PossibleValue::new("csync").help("Type CSYNC"),
+            Self::DHCID => PossibleValue::new("dhcid").help("Type DHCID"),
+            Self::DLV => PossibleValue::new("dlv").help("Type DLV"),
+            Self::DNAME => PossibleValue::new("dname").help("Type DNAME"),
+            Self::DNSKEY => PossibleValue::new("dnskey").help("Type DNSKEY"),
+            Self::DS => PossibleValue::new("ds").help("Type DS"),
+            Self::EUI48 => PossibleValue::new("eui48").help("Type EUI48"),
+            Self::EUI64 => PossibleValue::new("eui64").help("Type EUI64"),
+            Self::HINFO => PossibleValue::new("hinfo").help("Type HINFO"),
+            Self::HIP => PossibleValue::new("hip").help("Type HIP"),
+            Self::HTTPS => PossibleValue::new("https").help("Type HTTPS"),
+            Self::IPSECKEY => PossibleValue::new("ipseckey").help("Type IPSECKEY"),
+            Self::KEY => PossibleValue::new("key").help("Type KEY"),
+            Self::KX => PossibleValue::new("kx").help("Type KX"),
+            Self::LOC => PossibleValue::new("loc").help("Type LOC"),
+            Self::MX => PossibleValue::new("mx").help("Type MX"),
+            Self::NAPTR => PossibleValue::new("naptr").help("Type NAPTR"),
+            Self::NS => PossibleValue::new("ns").help("Type NS"),
+            Self::NSEC => PossibleValue::new("nsec").help("Type NSEC"),
+            Self::NSEC3 => PossibleValue::new("nsec3").help("Type NSEC3"),
+            Self::NSEC3PARAM => PossibleValue::new("nsec3param").help("Type NSEC3PARAM"),
+            Self::OPENPGPKEY => PossibleValue::new("openpgpkey").help("Type OPENPGPKEY"),
+            Self::PTR => PossibleValue::new("ptr").help("Type PTR"),
+            Self::RRSIG => PossibleValue::new("rrsig").help("Type RRSIG"),
+            Self::RP => PossibleValue::new("rp").help("Type RP"),
+            Self::SIG => PossibleValue::new("sig").help("Type SIG"),
+            Self::SMIMEA => PossibleValue::new("smimea").help("Type SMIMEA"),
+            Self::SOA => PossibleValue::new("soa").help("Type SOA"),
+            Self::SRV => PossibleValue::new("srv").help("Type SRV"),
+            Self::SSHFP => PossibleValue::new("sshfp").help("Type SSHFP"),
+            Self::SVCB => PossibleValue::new("svcb").help("Type SVCB"),
+            Self::TA => PossibleValue::new("ta").help("Type TA"),
+            Self::TKEY => PossibleValue::new("tkey").help("Type TKEY"),
+            Self::TLSA => PossibleValue::new("tlsa").help("Type TLSA"),
+            Self::TSIG => PossibleValue::new("tsig").help("Type TSIG"),
+            Self::TXT => PossibleValue::new("txt").help("Type TXT"),
+            Self::URI => PossibleValue::new("uri").help("Type URI"),
+            Self::ZONEMD => PossibleValue::new("zonemd").help("Type ZONEMD"),
+            Self::ANY => PossibleValue::new("any").help("Type ANY"),
+            Self::AXFR => PossibleValue::new("axfr").help("Type AXFR"),
+            Self::IXFR => PossibleValue::new("ixfr").help("Type IXFR"),
+            Self::OPT => PossibleValue::new("opt").help("Type OPT"),
+        })
+    }
+}
+
 impl Display for Kind {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -192,7 +309,7 @@ impl Display for Kind {
             Kind::NSEC3PARAM => f.write_str("NSEC3PARAM"),
             Kind::OPENPGPKEY => f.write_str("OPENPGPKEY"),
             Kind::PTR => f.write_str("PTR"),
-            Kind::RRSIG => f.write_str("RSIG"),
+            Kind::RRSIG => f.write_str("RRSIG"),
             Kind::RP => f.write_str("RP"),
             Kind::SIG => f.write_str("SIG"),
             Kind::SMIMEA => f.write_str("SMIMEA"),
@@ -225,6 +342,21 @@ pub enum Class {
     CH = 3,
     /// Hesiod, see https://en.wikipedia.org/wiki/Hesiod_(name_service)
     HS = 4,
+}
+
+impl ValueEnum for Class {
+    fn value_variants<'a>() -> &'a [Self] {
+        &[Self::IN, Self::CS, Self::CH, Self::HS]
+    }
+
+    fn to_possible_value(&self) -> Option<PossibleValue> {
+        Some(match self {
+            Class::IN => PossibleValue::new("in").help("Class IN"),
+            Class::CS => PossibleValue::new("cs").help("Class CS"),
+            Class::CH => PossibleValue::new("ch").help("Class CH"),
+            Class::HS => PossibleValue::new("hs").help("Class HS"),
+        })
+    }
 }
 
 impl Display for Class {
@@ -333,7 +465,7 @@ impl Flags {
     }
 
     pub fn opcode(&self) -> OpCode {
-        OpCode::parse_u16((self.0 >> 11) & 0x000f).expect("Invalid Opcode!")
+        OpCode::try_from((self.0 >> 11) & 0x000f).expect("Invalid Opcode!")
     }
 
     pub fn is_authoritative(&self) -> bool {
@@ -474,7 +606,7 @@ impl<'a> MessageBuilder<'a> {
         b.put_u16(additionals.len() as u16);
 
         for next in queries {
-            if !is_valid_domain(next.name) {
+            if next.kind != Kind::NS && !is_valid_domain(next.name) {
                 bail!("invalid question name '{}'", next.name);
             }
             for label in next
@@ -493,7 +625,7 @@ impl<'a> MessageBuilder<'a> {
 
         // http://www.tcpipguide.com/free/t_DNSMessageResourceRecordFieldFormats-2.htm
         for next in answers {
-            if !is_valid_domain(next.name) {
+            if next.kind != Kind::NS && !is_valid_domain(next.name) {
                 bail!("invalid answer name '{}'", next.name);
             }
             // name
@@ -700,12 +832,12 @@ impl Question<'_> {
 
     pub fn kind(&self) -> Kind {
         let n = self.offset + self.name().len();
-        Kind::parse_u16(BigEndian::read_u16(&self.raw[n..])).expect("Invalid question type!")
+        Kind::try_from(BigEndian::read_u16(&self.raw[n..])).expect("Invalid question type!")
     }
 
     pub fn class(&self) -> Class {
         let n = self.offset + self.name().len() + 2;
-        Class::parse_u16(BigEndian::read_u16(&self.raw[n..])).expect("Invalid question class!")
+        Class::try_from(BigEndian::read_u16(&self.raw[n..])).expect("Invalid question class!")
     }
 }
 
@@ -762,13 +894,13 @@ impl RR<'_> {
     pub fn kind(&self) -> Kind {
         let offset = self.offset + self.name().len();
         let code = BigEndian::read_u16(&self.raw[offset..]);
-        Kind::parse_u16(code).expect("Invalid RR type!")
+        Kind::try_from(code).expect("Invalid RR type!")
     }
 
     pub fn class(&self) -> Class {
         let offset = self.offset + self.name().len() + 2;
         let n = BigEndian::read_u16(&self.raw[offset..]);
-        Class::parse_u16(n).expect("Invalid RR class!")
+        Class::try_from(n).expect("Invalid RR class!")
     }
 
     #[inline(always)]
@@ -1402,8 +1534,8 @@ fn is_valid_domain(domain: &str) -> bool {
         return true;
     }
 
-    static RE: Lazy<Regex> =
-        Lazy::new(|| Regex::new("^([a-z0-9_-]{1,63})(\\.[a-z0-9_-]{1,63})+\\.?$").unwrap());
+    static RE: Lazy<regex::Regex> =
+        Lazy::new(|| regex::Regex::new("^([a-z0-9_-]{1,63})(\\.[a-z0-9_-]{1,63})+\\.?$").unwrap());
 
     RE.is_match(domain)
 }
