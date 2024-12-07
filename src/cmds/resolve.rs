@@ -100,7 +100,7 @@ fn print_resolve_result(
     req: &Message,
     res: &Message,
     begin: DateTime<Local>,
-) -> anyhow::Result<()> {
+) -> Result<()> {
     let cost = Local::now() - begin;
 
     println!();
@@ -114,7 +114,7 @@ fn print_resolve_result(
     println!(";; global options: +cmd");
     println!(";; Got answer:");
     println!(
-        ";; ->>HEADER<<- opcode: {:?}, status: {:?}, id: {}",
+        ";; ->>HEADER<<- opcode: {}, status: {}, id: {}",
         res.flags().opcode(),
         res.flags().response_code(),
         res.id()

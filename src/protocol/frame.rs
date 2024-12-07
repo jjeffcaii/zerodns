@@ -52,6 +52,24 @@ pub enum RCode {
     NotZone = 10,
 }
 
+impl Display for RCode {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            RCode::NoError => "NOERROR",
+            RCode::FormatError => "FORMATERROR",
+            RCode::ServerFailure => "SERVERFAILURE",
+            RCode::NameError => "NAMEERROR",
+            RCode::NotImplemented => "NOTIMPLEMENTED",
+            RCode::Refused => "REFUSED",
+            RCode::YXDomain => "YXDOMAIN",
+            RCode::YXRRSet => "YXRRSET",
+            RCode::NXRRSet => "NXRRSET",
+            RCode::NotAuth => "NOTAUTH",
+            RCode::NotZone => "NOTZONE",
+        })
+    }
+}
+
 /// dns record types, see also https://en.wikipedia.org/wiki/List_of_DNS_record_types
 #[allow(clippy::upper_case_acronyms)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq, EnumIter, Hash)]

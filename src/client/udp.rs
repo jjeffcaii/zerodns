@@ -173,28 +173,51 @@ impl MultiplexUdpClient {
 
     async fn request(
         &self,
-        req: Message,
+        req: &Message,
         remote: SocketAddr,
         timeout: Duration,
     ) -> Result<Message> {
-        let id = req.id();
+        let origin_id = req.id();
+        let mut id = origin_id;
 
         let (tx, rx) = oneshot::channel::<Message>();
         {
             let mut w = self.handlers.lock().await;
+            if w.contains_key(&(id, remote)) {
+                // TODO: how to check id conflict???
+                for seq in 1..u16::MAX {
+                    let key = (seq, remote);
+                    if !w.contains_key(&key) {
+                        id = seq;
+                        break;
+                    }
+                }
+            }
+
             w.insert((id, remote), tx);
         }
 
-        let res: Result<Message> = async move {
-            self.queue.send((req, remote)).await?;
+        let mut cloned_req = Clone::clone(req);
+        if origin_id != id {
+            cloned_req.set_id(id);
+        }
+        let mut res: Result<Message> = async move {
+            self.queue.send((cloned_req, remote)).await?;
             let res = tokio::time::timeout(timeout, rx).await??;
             Ok(res)
         }
         .await;
 
         // clean handler if enqueue failed
-        if res.is_err() {
-            self.handlers.lock().await.remove(&(id, remote));
+        match &mut res {
+            Ok(v) => {
+                if origin_id != id {
+                    v.set_id(origin_id);
+                }
+            }
+            Err(_) => {
+                self.handlers.lock().await.remove(&(id, remote));
+            }
         }
 
         res
@@ -205,9 +228,7 @@ impl MultiplexUdpClient {
 impl Client for UdpClient {
     async fn request(&self, req: &Message) -> Result<Message> {
         let w = requester().await?;
-        let res = w
-            .request(Clone::clone(req), self.addr, self.timeout)
-            .await?;
+        let res = w.request(req, self.addr, self.timeout).await?;
         Ok(res)
     }
 }
@@ -229,7 +250,6 @@ impl UdpClientBuilder {
 
 #[cfg(test)]
 mod tests {
-
     use crate::client::Client;
     use crate::protocol::{Class, Flags, Kind, Message, OpCode};
 
