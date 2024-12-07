@@ -380,6 +380,19 @@ pub enum OpCode {
     Update = 5,
 }
 
+impl Display for OpCode {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            OpCode::StandardQuery => "QUERY",
+            OpCode::InverseQuery => "IQUERY",
+            OpCode::Status => "STATUS",
+            OpCode::Reserved => "RESERVED",
+            OpCode::Notify => "NOTIFY",
+            OpCode::Update => "UPDATE",
+        })
+    }
+}
+
 pub struct FlagsBuilder(u16);
 
 impl FlagsBuilder {

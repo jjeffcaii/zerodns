@@ -1,3 +1,6 @@
+[global]
+resolv = "resolv.conf"
+
 [server]
 listen = "0.0.0.0:5454"
 cache_size = 5000

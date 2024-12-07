@@ -2,12 +2,13 @@ use crate::client::doh::DoHClient;
 use crate::client::dot::DoTClient;
 use crate::protocol::*;
 use crate::Result;
-use once_cell::sync::Lazy;
-use parking_lot::RwLock;
+use resolv_conf::ScopedIp;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 pub use tcp::{TcpClient, TcpClientBuilder};
+pub use tokio::sync::OnceCell;
 pub use udp::{UdpClient, UdpClientBuilder};
 
 mod doh;
@@ -15,14 +16,66 @@ mod dot;
 mod tcp;
 mod udp;
 
-pub static DEFAULT_DNS: Lazy<RwLock<Arc<dyn Client>>> = Lazy::new(|| {
-    let c = UdpClient::builder("8.8.8.8:53".parse().unwrap()).build();
-    RwLock::new(Arc::new(c))
-});
+static DEFAULT_DNS: OnceCell<Arc<dyn Client>> = OnceCell::const_new();
+
+pub async fn default_dns() -> Result<Arc<dyn Client>> {
+    let v = DEFAULT_DNS
+        .get_or_try_init(|| async {
+            use crate::misc::resolvconf;
+
+            if let Ok(c) = resolvconf::GLOBAL_CONFIG
+                .get_or_try_init(|| async {
+                    let path = PathBuf::from(crate::DEFAULT_RESOLV_CONF_PATH);
+                    let c = resolvconf::read(&path).await?;
+                    Ok::<_, anyhow::Error>(c)
+                })
+                .await
+            {
+                if let Some(next) = c.nameservers.first() {
+                    let ipaddr = match next {
+                        ScopedIp::V4(v4) => IpAddr::V4(*v4),
+                        ScopedIp::V6(v6, _) => IpAddr::V6(*v6),
+                    };
+
+                    debug!("use {} as default resolver", ipaddr);
+
+                    let mut bu = UdpClient::builder(SocketAddr::new(ipaddr, DEFAULT_UDP_PORT));
+
+                    if c.timeout > 0 {
+                        bu = bu.timeout(Duration::from_secs(c.timeout as u64));
+                    }
+
+                    let c = bu.build();
+                    let c: Arc<dyn Client> = Arc::new(c);
+                    return Ok::<Arc<dyn Client>, anyhow::Error>(c);
+                }
+            }
+            let c = UdpClient::builder("8.8.8.8:53".parse().unwrap()).build();
+            let c: Arc<dyn Client> = Arc::new(c);
+
+            debug!("use 8.8.8.8 as default resolver");
+
+            Ok(c)
+        })
+        .await?;
+
+    Ok(Clone::clone(v))
+}
 
 #[async_trait::async_trait]
 pub trait Client: Sync + Send + 'static {
     async fn request(&self, req: &Message) -> Result<Message>;
+}
+
+#[derive(Debug, Default, Copy, Clone)]
+pub(crate) struct DefaultClient;
+
+#[async_trait::async_trait]
+impl Client for DefaultClient {
+    async fn request(&self, req: &Message) -> Result<Message> {
+        let c = default_dns().await?;
+        c.request(req).await
+    }
 }
 
 pub async fn request(dns: &DNS, request: &Message, timeout: Duration) -> Result<Message> {
@@ -74,14 +127,6 @@ pub async fn request(dns: &DNS, request: &Message, timeout: Duration) -> Result<
     }
 }
 
-pub fn set_default_dns<C>(client: C)
-where
-    C: Client,
-{
-    let mut w = DEFAULT_DNS.write();
-    *w = Arc::new(client)
-}
-
 #[inline]
 async fn lookup(host: &str, timeout: Duration) -> Result<Ipv4Addr> {
     // TODO: add cache
@@ -96,12 +141,7 @@ async fn lookup(host: &str, timeout: Duration) -> Result<Ipv4Addr> {
         .question(host, Kind::A, Class::IN)
         .build()?;
 
-    let c = {
-        let r = DEFAULT_DNS.read();
-        Clone::clone(&*r)
-    };
-
-    let v = c.request(&req0).await?;
+    let v = DefaultClient.request(&req0).await?;
 
     for next in v.answers() {
         if let Ok(RData::A(a)) = next.rdata() {
@@ -122,15 +162,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_default_client() -> anyhow::Result<()> {
+        init();
+
+        let c = DefaultClient::default();
+        let flags = Flags::builder().recursive_query(true).build();
+        let req = Message::builder()
+            .flags(flags)
+            .id(0x1234)
+            .question("www.taobao.com", Kind::A, Class::IN)
+            .build()?;
+
+        let res = c.request(&req).await;
+        assert!(res.is_ok_and(|res| {
+            for next in res.answers() {
+                info!(
+                    "{}\t{}\t{}\t{}",
+                    next.name(),
+                    next.kind(),
+                    next.class(),
+                    next.rdata().unwrap()
+                );
+            }
+
+            res.flags().response_code() == RCode::NoError
+        }));
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn test_request() -> anyhow::Result<()> {
         init();
 
         let req = {
-            // type=A domain=baidu.com
-            let raw = hex::decode(
-                "128e0120000100000000000105626169647503636f6d00000100010000291000000000000000",
-            )?;
-            Message::from(raw)
+            let flags = Flags::builder().recursive_query(true).build();
+            Message::builder()
+                .flags(flags)
+                .question("baidu.com", Kind::A, Class::IN)
+                .build()?
         };
 
         for next in [

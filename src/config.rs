@@ -7,10 +7,17 @@ use toml::Value;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
+    #[serde(default)]
+    pub global: GlobalConfig,
     pub logger: Option<LoggerConfig>,
     pub server: ServerConfig,
     pub filters: HashMap<String, Filter>,
     pub rules: Vec<Rule>,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct GlobalConfig {
+    pub resolv: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
