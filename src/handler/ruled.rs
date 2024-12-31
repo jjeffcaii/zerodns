@@ -175,7 +175,7 @@ impl RuledHandler {
 
 #[async_trait]
 impl Handler for RuledHandler {
-    async fn handle(&self, req: &mut Message) -> Result<Option<Message>> {
+    async fn handle(&self, ctx: &mut Context, req: &mut Message) -> Result<Option<Message>> {
         if let Some(rule) = self.get_rule(req) {
             let mut b = FilteredHandler::builder();
 
@@ -184,7 +184,7 @@ impl Handler for RuledHandler {
             }
 
             if let Some(h) = b.build() {
-                return h.handle(req).await;
+                return h.handle(ctx, req).await;
             }
         }
 
@@ -255,7 +255,8 @@ mod tests {
 
         let x = NoopFilter::requests();
 
-        let res = h.handle(&mut req).await;
+        let mut ctx = Context::default();
+        let res = h.handle(&mut ctx, &mut req).await;
 
         assert!(res.is_ok());
 

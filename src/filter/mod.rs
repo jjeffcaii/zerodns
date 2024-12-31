@@ -4,7 +4,7 @@ pub(crate) use lua::LuaFilterFactory;
 #[cfg(test)]
 pub(crate) use noop::NoopFilter;
 pub(crate) use noop::NoopFilterFactory;
-pub use proto::{Context, Filter};
+pub use proto::{Context, ContextFlags, Filter};
 pub(crate) use proxyby::ProxyByFilterFactory;
 pub(crate) use registry::load;
 pub(crate) use registry::FilterFactoryExt;

@@ -16,6 +16,8 @@ extern crate anyhow;
 extern crate cfg_if;
 #[macro_use]
 extern crate log;
+#[macro_use]
+extern crate bitflags;
 
 /// cached string
 pub mod cachestr {
@@ -28,6 +30,7 @@ pub(crate) mod cache;
 pub mod client;
 pub mod config;
 pub(crate) mod error;
+pub mod ext;
 pub mod filter;
 pub mod handler;
 pub mod logger;
@@ -41,8 +44,4 @@ pub type Result<T> = anyhow::Result<T>;
 
 pub use builtin::{setup, setup_logger};
 
-pub use misc::resolvconf::read as read_resolvconf;
-pub use misc::resolvconf::GLOBAL_CONFIG;
-
-pub const DEFAULT_RESOLV_CONF_PATH: &str = "/etc/resolv.conf";
 pub const DEFAULT_UDP_PORT: u16 = 53;

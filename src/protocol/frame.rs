@@ -1,6 +1,8 @@
+use std::borrow::Cow;
 use std::fmt::{Debug, Display, Formatter};
 use std::net::{Ipv4Addr, Ipv6Addr};
 
+use crate::misc::is_valid_domain;
 use byteorder::{BigEndian, ByteOrder};
 use bytes::{BufMut, Bytes, BytesMut};
 use clap::builder::PossibleValue;
@@ -539,12 +541,12 @@ impl Flags {
 }
 
 struct Authority<'a> {
-    name: &'a str,
+    name: Cow<'a, str>,
     kind: Kind,
     class: Class,
     ttl: u32,
-    primary_name_server: &'a str,
-    responsible_authority_mailbox: &'a str,
+    primary_name_server: Cow<'a, str>,
+    responsible_authority_mailbox: Cow<'a, str>,
     refresh_interval: u32,
     retry_interval: u32,
     expire_limit: u32,
@@ -552,17 +554,17 @@ struct Authority<'a> {
 }
 
 struct Answer<'a> {
-    name: &'a str,
+    name: Cow<'a, str>,
     kind: Kind,
     class: Class,
     ttl: u32,
-    data: &'a [u8],
+    data: Cow<'a, [u8]>,
 }
 
 struct Additional {}
 
 struct Query<'a> {
-    name: &'a str,
+    name: Cow<'a, str>,
     kind: Kind,
     class: Class,
 }
@@ -588,31 +590,34 @@ impl<'a> MessageBuilder<'a> {
         self
     }
 
-    pub fn question<'b>(mut self, name: &'b str, kind: Kind, class: Class) -> Self
+    pub fn raw_question(self, question: Question<'a>) -> Self {
+        let name = question.name().to_string();
+        self.question(name, question.kind(), question.class())
+    }
+
+    pub fn question<N>(mut self, name: N, kind: Kind, class: Class) -> Self
     where
-        'b: 'a,
+        N: Into<Cow<'a, str>>,
     {
-        self.queries.push(Query { name, kind, class });
+        self.queries.push(Query {
+            name: name.into(),
+            kind,
+            class,
+        });
         self
     }
 
-    pub fn answer<'b>(
-        mut self,
-        name: &'b str,
-        kind: Kind,
-        class: Class,
-        ttl: u32,
-        data: &'b [u8],
-    ) -> Self
+    pub fn answer<N, D>(mut self, name: N, kind: Kind, class: Class, ttl: u32, data: D) -> Self
     where
-        'b: 'a,
+        N: Into<Cow<'a, str>>,
+        D: Into<Cow<'a, [u8]>>,
     {
         self.answers.push(Answer {
-            name,
+            name: name.into(),
             kind,
             class,
             ttl,
-            data,
+            data: data.into(),
         });
         self
     }
@@ -637,11 +642,11 @@ impl<'a> MessageBuilder<'a> {
         b.put_u16(additionals.len() as u16);
 
         for next in queries {
-            if next.kind != Kind::NS && !is_valid_domain(next.name) {
-                bail!("invalid question name '{}'", next.name);
+            let name = next.name;
+            if next.kind != Kind::NS && !is_valid_domain(&name) {
+                bail!("invalid question name '{}'", &name);
             }
-            for label in next
-                .name
+            for label in name
                 .split('.')
                 .filter(|it| !it.is_empty())
                 .map(|it| it.as_bytes())
@@ -656,13 +661,13 @@ impl<'a> MessageBuilder<'a> {
 
         // http://www.tcpipguide.com/free/t_DNSMessageResourceRecordFieldFormats-2.htm
         for next in answers {
-            if next.kind != Kind::NS && !is_valid_domain(next.name) {
-                bail!("invalid answer name '{}'", next.name);
+            let name = next.name;
+            if next.kind != Kind::NS && !is_valid_domain(&name) {
+                bail!("invalid answer name '{}'", &name);
             }
             // name
             {
-                for label in next
-                    .name
+                for label in name
                     .split('.')
                     .filter(|it| !it.is_empty())
                     .map(|it| it.as_bytes())
@@ -684,7 +689,7 @@ impl<'a> MessageBuilder<'a> {
 
             // rdata
             b.put_u16(next.data.len() as u16);
-            b.put_slice(next.data);
+            b.put_slice(&next.data);
         }
 
         for next in authorities {
@@ -872,7 +877,7 @@ impl Question<'_> {
     }
 }
 
-impl<'a> Display for Question<'a> {
+impl Display for Question<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         for next in self.name() {
             write!(f, "{}.", unsafe { std::str::from_utf8_unchecked(next) })?;
@@ -1152,7 +1157,7 @@ pub enum RData<'a> {
     UNKNOWN(&'a [u8]),
 }
 
-impl<'a> Display for RData<'a> {
+impl Display for RData<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             RData::A(it) => write!(f, "{}", it),
@@ -1178,7 +1183,7 @@ impl A<'_> {
     }
 }
 
-impl<'a> Display for A<'a> {
+impl Display for A<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.ipaddr())
     }
@@ -1365,7 +1370,7 @@ impl AAAA<'_> {
     }
 }
 
-impl<'a> Display for AAAA<'a> {
+impl Display for AAAA<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.ipaddr())
     }
@@ -1397,7 +1402,7 @@ impl MX<'_> {
     }
 }
 
-impl<'a> Display for MX<'a> {
+impl Display for MX<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{} {}", self.preference(), self.mail_exchange())
     }
@@ -1544,7 +1549,7 @@ impl SOA<'_> {
     }
 }
 
-impl<'a> Display for SOA<'a> {
+impl Display for SOA<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
@@ -1558,17 +1563,6 @@ impl<'a> Display for SOA<'a> {
             self.minimum_ttl(),
         )
     }
-}
-
-fn is_valid_domain(domain: &str) -> bool {
-    if domain == "." {
-        return true;
-    }
-
-    static RE: Lazy<regex::Regex> =
-        Lazy::new(|| regex::Regex::new("^([a-z0-9_-]{1,63})(\\.[a-z0-9_-]{1,63})+\\.?$").unwrap());
-
-    RE.is_match(domain)
 }
 
 #[cfg(test)]

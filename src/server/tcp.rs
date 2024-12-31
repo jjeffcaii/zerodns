@@ -6,9 +6,9 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Notify;
 use tokio_util::codec::{FramedRead, FramedWrite};
 
-use crate::cache::{CacheStore, CacheStoreExt};
+use crate::cache::CacheStore;
 use crate::handler::Handler;
-use crate::protocol::{Codec, Flags, Message, RCode};
+use crate::protocol::Codec;
 use crate::Result;
 
 pub struct TcpServer<H, C> {
@@ -87,50 +87,10 @@ where
         let mut w = FramedWrite::new(w, Codec);
 
         while let Some(next) = r.next().await {
-            let mut req = next?;
-
-            if let Some(cache) = cache.as_deref() {
-                let id = req.id();
-                req.set_id(0);
-                let cached = cache.get_fixed(&req).await;
-                req.set_id(id);
-
-                if let Some(mut exist) = cached {
-                    exist.set_id(id);
-
-                    debug!("use dns cache");
-
-                    w.send(&exist).await?;
-
-                    return Ok(());
-                }
-            }
-
-            let res = handler.handle(&mut req).await?;
-
-            let msg = res.unwrap_or_else(|| {
-                let mut b = Flags::builder()
-                    .response()
-                    .opcode(req.flags().opcode())
-                    .rcode(RCode::NameError);
-                if req.flags().is_recursive_query() {
-                    b = b.recursive_query(true).recursive_available(true);
-                }
-                Message::builder()
-                    .id(req.id())
-                    .flags(b.build())
-                    .build()
-                    .unwrap()
-            });
-
-            if let Some(cache) = &cache {
-                let id = req.id();
-                req.set_id(0);
-                cache.set(&req, &msg).await;
-                req.set_id(id);
-                debug!("set dns cache ok");
-            }
-
+            let req = next?;
+            let handler = Clone::clone(&handler);
+            let cache = Clone::clone(&cache);
+            let msg = super::helper::handle(req, handler, cache).await;
             w.send(&msg).await?;
         }
 
@@ -143,6 +103,7 @@ mod tests {
     use super::*;
     use crate::cache::InMemoryCache;
     use crate::client::request;
+    use crate::filter::Context;
     use crate::protocol::{Message, DNS};
     use std::str::FromStr;
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -156,7 +117,7 @@ mod tests {
 
     #[async_trait::async_trait]
     impl Handler for MockHandler {
-        async fn handle(&self, req: &mut Message) -> Result<Option<Message>> {
+        async fn handle(&self, _ctx: &mut Context, _req: &mut Message) -> Result<Option<Message>> {
             self.cnt.fetch_add(1, Ordering::SeqCst);
             Ok(Some(Clone::clone(&self.resp)))
         }

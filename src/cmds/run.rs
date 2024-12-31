@@ -24,10 +24,11 @@ pub(crate) async fn execute(sm: &ArgMatches) -> Result<()> {
     }
 
     // set global resolv file
-    if let Some(resolv) = &c.global.resolv.clone().filter(|it| !it.is_empty()) {
+    if let Some(resolv) = &c.global.resolv_file.clone().filter(|it| !it.is_empty()) {
+        use zerodns::ext::resolvconf;
         let path = PathBuf::from(resolv);
-        let _ = zerodns::GLOBAL_CONFIG
-            .get_or_try_init(|| zerodns::read_resolvconf(&path))
+        let _ = resolvconf::GLOBAL_CONFIG
+            .get_or_try_init(|| resolvconf::read(&path))
             .await?;
     }
 

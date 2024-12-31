@@ -1,8 +1,19 @@
 use crate::protocol::Message;
 use crate::Result;
 
+#[derive(Debug, Copy, Clone, Default, Hash, PartialEq, Eq)]
+pub struct ContextFlags(u64);
+
+bitflags! {
+    impl ContextFlags: u64 {
+        const NO_CACHE = 1 << 0;
+    }
+}
+
 #[derive(Debug, Default)]
-pub struct Context {}
+pub struct Context {
+    pub flags: ContextFlags,
+}
 
 #[async_trait::async_trait]
 pub trait Filter: Send + Sync + 'static {

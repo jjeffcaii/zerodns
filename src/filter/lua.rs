@@ -1,6 +1,6 @@
 use super::proto::Filter;
 use crate::client::request as resolve;
-use crate::filter::{handle_next, Context, FilterFactory, Options};
+use crate::filter::{handle_next, Context, ContextFlags, FilterFactory, Options};
 use crate::protocol::{Class, Flags, Kind, Message, DNS};
 use async_trait::async_trait;
 use mlua::prelude::*;
@@ -145,6 +145,12 @@ impl UserData for LuaContext {
         });
     }
     fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
+        methods.add_method("nocache", |_lua, this, ()| {
+            let ctx = unsafe { this.0.as_mut().unwrap() };
+            ctx.flags.set(ContextFlags::NO_CACHE, true);
+            Ok(())
+        });
+
         methods.add_method("answer", |lua, this, msg: LuaMessage| {
             let resp = unsafe { this.2.as_mut().unwrap() };
             resp.replace(msg.0);
@@ -171,13 +177,16 @@ impl UserData for LuaContext {
                 }
             }
 
+            let mut bu = Message::builder().id(req.id()).flags(flags);
+
+            for question in req.questions() {
+                let name = question.name().to_string();
+                bu = bu.question(name, question.kind(), question.class());
+            }
+
             let name = unsafe { std::str::from_utf8_unchecked(&v[..]) };
-
             let octets = ipv4.octets();
-
-            let msg = Message::builder()
-                .id(req.id())
-                .flags(flags)
+            let msg = bu
                 .answer(name, Kind::A, Class::IN, 300, &octets[..])
                 .build()
                 .unwrap();

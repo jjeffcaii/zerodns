@@ -1,6 +1,6 @@
 [package]
 name = "zerodns"
-version = "0.1.0-alpha.6"
+version = "0.1.0-alpha.7"
 edition = "2021"
 license = "MIT"
 readme = "README.md"
@@ -67,6 +67,7 @@ http = "1.2"
 string_cache = "0.8"
 rand = "0.8"
 resolv-conf = "0.7"
+bitflags = "2.6"
 
 [dev-dependencies]
 hex = "0.4"

@@ -1,12 +1,13 @@
-use futures::{SinkExt, StreamExt};
+use futures::StreamExt;
 use hashbrown::HashMap;
 use once_cell::sync::Lazy;
 use socket2::{Domain, Protocol, Type};
-use std::net::SocketAddr;
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
+use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::UdpSocket;
-use tokio::sync::{mpsc, oneshot, Mutex, OnceCell};
+use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
 use tokio_util::codec::BytesCodec;
 use tokio_util::udp::UdpFramed;
 
@@ -88,27 +89,53 @@ impl UdpClient {
     }
 }
 
-static DEFAULT_MULTIPLEX_UDP_CLIENT: OnceCell<MultiplexUdpClient> = OnceCell::const_new();
+static DEFAULT_MULTIPLEX_UDP_CLIENTS: Lazy<RwLock<HashMap<SocketAddr, MultiplexUdpClient>>> =
+    Lazy::new(Default::default);
 
 #[inline]
-async fn requester<'a>() -> Result<&'a MultiplexUdpClient> {
-    DEFAULT_MULTIPLEX_UDP_CLIENT
-        .get_or_try_init(MultiplexUdpClient::new)
-        .await
+async fn requester(addr: SocketAddr) -> Result<MultiplexUdpClient> {
+    {
+        let r = DEFAULT_MULTIPLEX_UDP_CLIENTS.read().await;
+        if let Some(v) = r.get(&addr) {
+            return Ok(Clone::clone(v));
+        }
+    }
+
+    let mut w = DEFAULT_MULTIPLEX_UDP_CLIENTS.write().await;
+
+    if let Some(v) = w.get(&addr) {
+        return Ok(Clone::clone(v));
+    }
+
+    let c = MultiplexUdpClient::new(addr).await?;
+    w.insert(addr, Clone::clone(&c));
+
+    Ok(c)
 }
 
-type Handlers = Arc<Mutex<HashMap<(u16, SocketAddr), oneshot::Sender<Message>>>>;
+type Handlers = Arc<Mutex<HashMap<u16, oneshot::Sender<Message>>>>;
 
+#[derive(Clone)]
 struct MultiplexUdpClient {
-    queue: mpsc::Sender<(Message, SocketAddr)>,
+    queue: mpsc::Sender<Message>,
     handlers: Handlers,
+    seqs: Arc<AtomicU16>,
 }
 
 impl MultiplexUdpClient {
-    async fn new() -> Result<MultiplexUdpClient> {
+    async fn new(nameserver: SocketAddr) -> Result<MultiplexUdpClient> {
         let socket = {
-            let socket = socket2::Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
-            let source = "0.0.0.0:0".parse::<SocketAddr>()?;
+            let (socket, source) = match &nameserver {
+                SocketAddr::V4(_) => (
+                    socket2::Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?,
+                    SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0)),
+                ),
+                SocketAddr::V6(_) => (
+                    socket2::Socket::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP))?,
+                    SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, 0, 0, 0)),
+                ),
+            };
+
             let addr = socket2::SockAddr::from(source);
 
             socket
@@ -124,43 +151,55 @@ impl MultiplexUdpClient {
             UdpSocket::from_std(socket)?
         };
 
-        Ok(Self::start(socket).await)
+        Ok(Self::start(socket, nameserver).await)
     }
 
-    async fn start(socket: UdpSocket) -> MultiplexUdpClient {
-        let (mut sink, mut stream) = UdpFramed::new(socket, BytesCodec::default()).split();
-
+    async fn start(local: UdpSocket, remote: SocketAddr) -> MultiplexUdpClient {
         let handlers: Handlers = Default::default();
 
-        // TODO: notify to stop
+        let socket = Arc::new(local);
 
-        let cloned_handlers = Clone::clone(&handlers);
-        tokio::spawn(async move {
-            while let Some(next) = stream.next().await {
-                match next {
-                    Ok((b, remote)) => {
+        // TODO: notify to stop
+        // read worker
+        {
+            let socket = Clone::clone(&socket);
+            let handlers = Clone::clone(&handlers);
+            tokio::spawn(async move {
+                let mut stream = UdpFramed::new(Clone::clone(&socket), BytesCodec::new());
+                while let Some(next) = stream.next().await {
+                    if let Ok((b, remote)) = next {
                         let msg = Message::from(b);
                         let id = msg.id();
                         let handler = {
-                            let mut w = cloned_handlers.lock().await;
-                            w.remove(&(id, remote))
+                            let mut w = handlers.lock().await;
+                            w.remove(&id)
                         };
 
                         if let Some(tx) = handler {
                             tx.send(msg).ok();
                         }
                     }
-                    Err(_) => break,
                 }
-            }
-        });
+                info!("udp stream {} is eof", socket.peer_addr().unwrap());
+            });
+        }
 
-        let (tx, mut rx) = mpsc::channel::<(Message, SocketAddr)>(1);
+        // write worker
+        let (tx, mut rx) = mpsc::channel::<Message>(1);
+
         tokio::spawn(async move {
-            while let Some((req, tgt)) = rx.recv().await {
+            while let Some(req) = rx.recv().await {
+                let id = req.id();
                 let b = req.0.freeze();
-                if let Err(e) = sink.send((b, tgt)).await {
-                    error!("failed to send message: {}", e);
+                if let Err(e) = socket.send_to(&b, &remote).await {
+                    error!(
+                        "failed to send message-0x{:04x}({}B) to {}: {}",
+                        id,
+                        b.len(),
+                        &remote,
+                        e
+                    );
+                    continue;
                 }
             }
         });
@@ -168,55 +207,58 @@ impl MultiplexUdpClient {
         Self {
             queue: tx,
             handlers,
+            seqs: Default::default(),
         }
     }
 
-    async fn request(
-        &self,
-        req: &Message,
-        remote: SocketAddr,
-        timeout: Duration,
-    ) -> Result<Message> {
+    #[inline]
+    async fn next_seq(&self) -> u16 {
+        self.seqs.fetch_add(1, Ordering::SeqCst)
+    }
+
+    async fn request(&self, req: &Message, timeout: Duration) -> Result<Message> {
         let origin_id = req.id();
-        let mut id = origin_id;
+
+        let id = {
+            let mut id = 0u16;
+            loop {
+                id = self.next_seq().await;
+                if id != 0 {
+                    break;
+                }
+            }
+            id
+        };
 
         let (tx, rx) = oneshot::channel::<Message>();
         {
             let mut w = self.handlers.lock().await;
-            if w.contains_key(&(id, remote)) {
-                // TODO: how to check id conflict???
-                for seq in 1..u16::MAX {
-                    let key = (seq, remote);
-                    if !w.contains_key(&key) {
-                        id = seq;
-                        break;
-                    }
-                }
+            w.insert(id, tx);
+        }
+
+        let mut res: Result<Message> = {
+            let req = {
+                let mut req = Clone::clone(req);
+                req.set_id(id);
+                req
+            };
+
+            async move {
+                self.queue.send(req).await?;
+                let res = tokio::time::timeout(timeout, rx).await??;
+                Ok(res)
             }
-
-            w.insert((id, remote), tx);
-        }
-
-        let mut cloned_req = Clone::clone(req);
-        if origin_id != id {
-            cloned_req.set_id(id);
-        }
-        let mut res: Result<Message> = async move {
-            self.queue.send((cloned_req, remote)).await?;
-            let res = tokio::time::timeout(timeout, rx).await??;
-            Ok(res)
-        }
-        .await;
+            .await
+        };
 
         // clean handler if enqueue failed
         match &mut res {
             Ok(v) => {
-                if origin_id != id {
-                    v.set_id(origin_id);
-                }
+                // reset origin id
+                v.set_id(origin_id);
             }
             Err(_) => {
-                self.handlers.lock().await.remove(&(id, remote));
+                self.handlers.lock().await.remove(&id);
             }
         }
 
@@ -227,8 +269,8 @@ impl MultiplexUdpClient {
 #[async_trait::async_trait]
 impl Client for UdpClient {
     async fn request(&self, req: &Message) -> Result<Message> {
-        let w = requester().await?;
-        let res = w.request(req, self.addr, self.timeout).await?;
+        let w = requester(self.addr).await?;
+        let res = w.request(req, self.timeout).await?;
         Ok(res)
     }
 }
@@ -252,6 +294,7 @@ impl UdpClientBuilder {
 mod tests {
     use crate::client::Client;
     use crate::protocol::{Class, Flags, Kind, Message, OpCode};
+    use tokio::task::JoinSet;
 
     use super::*;
 
@@ -296,6 +339,64 @@ mod tests {
                 msg.answer_count() > 0
             }));
         }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_concurrency() -> anyhow::Result<()> {
+        init();
+
+        let mut joins = JoinSet::new();
+
+        for i in 0..64 {
+            joins.spawn(async move {
+                let req = Message::builder()
+                    .id(i)
+                    .flags(
+                        Flags::builder()
+                            .request()
+                            .opcode(OpCode::StandardQuery)
+                            .recursive_query(true)
+                            .build(),
+                    )
+                    .question("t.cn", Kind::A, Class::IN)
+                    .build()
+                    .unwrap();
+
+                for j in 0..18 {
+                    let c = match i % 3 {
+                        0 => UdpClient::aliyun(),
+                        1 => UdpClient::aliyun2(),
+                        2 => UdpClient::google(),
+                        _ => UdpClient::aliyun(),
+                    };
+
+                    match c.request(&req).await {
+                        Ok(msg) => {
+                            for next in msg.answers() {
+                                info!(
+                                    "#{}-{}\t{}.\t{}\t{:?}\t{:?}\t{}",
+                                    i,
+                                    j,
+                                    next.name(),
+                                    next.time_to_live(),
+                                    next.class(),
+                                    next.kind(),
+                                    next.rdata().unwrap()
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            error!("#{}-{}\trequest failed: {}", i, j, e);
+                        }
+                    }
+                }
+            });
+        }
+
+        while let Some(next) = joins.join_next().await {}
 
         Ok(())
     }

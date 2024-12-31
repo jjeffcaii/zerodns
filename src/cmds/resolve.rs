@@ -33,12 +33,13 @@ pub(crate) async fn execute(sm: &ArgMatches) -> Result<()> {
         match sm.get_one::<String>("server") {
             None => {
                 use resolv_conf::ScopedIp;
+                use zerodns::ext::resolvconf;
 
-                let c = zerodns::read_resolvconf(zerodns::DEFAULT_RESOLV_CONF_PATH).await?;
+                let c = resolvconf::read(resolvconf::DEFAULT_RESOLV_CONF_PATH).await?;
                 let first = c.nameservers.first().ok_or_else(|| {
                     anyhow!(
                         "no nameserver found in {}!",
-                        zerodns::DEFAULT_RESOLV_CONF_PATH
+                        resolvconf::DEFAULT_RESOLV_CONF_PATH
                     )
                 })?;
 

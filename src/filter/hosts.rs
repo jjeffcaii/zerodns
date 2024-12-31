@@ -90,6 +90,8 @@ impl Filter for HostsFilter {
                 let mut bu = Message::builder().flags(f.build()).id(req.id());
 
                 for (question, answer) in &answers {
+                    let name = question.name().to_string();
+                    bu = bu.question(name, question.kind(), question.class());
                     if let Some((k, v)) = answer {
                         for ip in v {
                             bu = bu.answer(

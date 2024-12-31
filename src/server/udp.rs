@@ -1,15 +1,15 @@
 use futures::StreamExt;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::Instant;
 use tokio::net::UdpSocket;
 use tokio::sync::Notify;
 use tokio_util::codec::BytesCodec;
 use tokio_util::udp::UdpFramed;
 
-use crate::cache::{CacheStore, CacheStoreExt};
+use super::helper;
+use crate::cache::CacheStore;
 use crate::handler::Handler;
-use crate::protocol::{Flags, Message, RCode};
+use crate::protocol::Message;
 use crate::Result;
 
 pub struct UdpServer<H, C> {
@@ -29,61 +29,11 @@ impl<H, C> UdpServer<H, C> {
         }
     }
 }
-
 impl<H, C> UdpServer<H, C>
 where
     H: Handler,
     C: CacheStore,
 {
-    #[inline]
-    async fn handle(mut req: Message, h: Arc<H>, cache: Option<Arc<C>>) -> Result<Message> {
-        if let Some(cache) = cache.as_deref() {
-            let id = req.id();
-            req.set_id(0);
-            let cached = cache.get_fixed(&req).await;
-            req.set_id(id);
-
-            if let Some(mut exist) = cached {
-                exist.set_id(id);
-                debug!("use dns cache");
-                return Ok(exist);
-            }
-        }
-
-        let res = h.handle(&mut req).await?;
-
-        let mut cached = true;
-
-        let msg = res.unwrap_or_else(|| {
-            cached = false;
-            let mut b = Flags::builder()
-                .response()
-                .opcode(req.flags().opcode())
-                .rcode(RCode::NameError);
-            if req.flags().is_recursive_query() {
-                b = b.recursive_query(true).recursive_available(true);
-            }
-            Message::builder()
-                .id(req.id())
-                .flags(b.build())
-                .build()
-                .unwrap()
-        });
-
-        if cached {
-            if let Some(cache) = &cache {
-                let id = req.id();
-                req.set_id(0);
-                cache.set(&req, &msg).await;
-                req.set_id(id);
-
-                debug!("set dns cache ok");
-            }
-        }
-
-        Ok(msg)
-    }
-
     async fn handle_request(
         socket: Arc<UdpSocket>,
         peer: SocketAddr,
@@ -91,54 +41,8 @@ where
         h: Arc<H>,
         cache: Option<Arc<C>>,
     ) {
-        let rid = req.id();
-        let rflags = req.flags();
-
-        let begin = Instant::now();
-
-        let res = match Self::handle(req, h, cache).await {
-            Ok(res) => {
-                debug!(
-                    "handle request 0x{:04x} ok: cost={:.6}s",
-                    res.id(),
-                    begin.elapsed().as_secs_f32()
-                );
-                if res.answer_count() > 0 {
-                    for next in res.answers() {
-                        if let Ok(rdata) = next.rdata() {
-                            info!(
-                                "0x{:04x} <- {}.\t{}\t{:?}\t{:?}\t{}",
-                                res.id(),
-                                next.name(),
-                                next.time_to_live(),
-                                next.class(),
-                                next.kind(),
-                                rdata,
-                            );
-                        }
-                    }
-                }
-                res
-            }
-            Err(e) => {
-                error!("failed to handle dns request: {:?}", e);
-                let mut fb = Flags::builder()
-                    .response()
-                    .opcode(rflags.opcode())
-                    .rcode(RCode::ServerFailure);
-                if rflags.is_recursive_query() {
-                    fb = fb.recursive_query(true);
-                    fb = fb.recursive_available(true);
-                }
-                Message::builder()
-                    .id(rid)
-                    .flags(fb.build())
-                    .build()
-                    .expect("should build message ok")
-            }
-        };
-
-        if let Err(e) = socket.send_to(res.as_ref(), peer).await {
+        let result = helper::handle(req, h, cache).await;
+        if let Err(e) = socket.send_to(result.as_ref(), peer).await {
             error!("failed to reply dns response: {:?}", e);
         }
     }
@@ -196,14 +100,14 @@ where
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use crate::cache::InMemoryCache;
     use crate::client::request;
+    use crate::filter::Context;
     use crate::protocol::{Message, DNS};
     use std::str::FromStr;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::Duration;
-
-    use super::*;
 
     #[derive(Clone)]
     struct MockHandler {
@@ -213,7 +117,7 @@ mod tests {
 
     #[async_trait::async_trait]
     impl Handler for MockHandler {
-        async fn handle(&self, req: &mut Message) -> Result<Option<Message>> {
+        async fn handle(&self, _ctx: &mut Context, _req: &mut Message) -> Result<Option<Message>> {
             self.cnt.fetch_add(1, Ordering::SeqCst);
             Ok(Some(Clone::clone(&self.resp)))
         }

@@ -7,6 +7,9 @@ pub(crate) enum Error {
     #[error("unknown internal error")]
     Unknown,
 
+    #[error("invalid request format '{0}'")]
+    InvalidRequestFormat(Cow<'static, str>),
+
     #[error("invalid configuration '{0}'")]
     InvalidConfig(Cow<'static, str>),
 

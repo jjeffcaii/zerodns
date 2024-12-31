@@ -2,7 +2,6 @@ use crate::client::doh::DoHClient;
 use crate::client::dot::DoTClient;
 use crate::protocol::*;
 use crate::Result;
-use resolv_conf::ScopedIp;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -21,11 +20,12 @@ static DEFAULT_DNS: OnceCell<Arc<dyn Client>> = OnceCell::const_new();
 pub async fn default_dns() -> Result<Arc<dyn Client>> {
     let v = DEFAULT_DNS
         .get_or_try_init(|| async {
-            use crate::misc::resolvconf;
+            use crate::ext::resolvconf;
+            use resolv_conf::ScopedIp;
 
             if let Ok(c) = resolvconf::GLOBAL_CONFIG
                 .get_or_try_init(|| async {
-                    let path = PathBuf::from(crate::DEFAULT_RESOLV_CONF_PATH);
+                    let path = PathBuf::from(resolvconf::DEFAULT_RESOLV_CONF_PATH);
                     let c = resolvconf::read(&path).await?;
                     Ok::<_, anyhow::Error>(c)
                 })
@@ -37,7 +37,7 @@ pub async fn default_dns() -> Result<Arc<dyn Client>> {
                         ScopedIp::V6(v6, _) => IpAddr::V6(*v6),
                     };
 
-                    debug!("use {} as default resolver", ipaddr);
+                    info!("use {} as default resolver", ipaddr);
 
                     let mut bu = UdpClient::builder(SocketAddr::new(ipaddr, DEFAULT_UDP_PORT));
 
@@ -50,10 +50,13 @@ pub async fn default_dns() -> Result<Arc<dyn Client>> {
                     return Ok::<Arc<dyn Client>, anyhow::Error>(c);
                 }
             }
-            let c = UdpClient::builder("8.8.8.8:53".parse().unwrap()).build();
+
+            const DEFAULT_DNS: &str = "8.8.8.8:53";
+
+            let c = UdpClient::builder(DEFAULT_DNS.parse().unwrap()).build();
             let c: Arc<dyn Client> = Arc::new(c);
 
-            debug!("use 8.8.8.8 as default resolver");
+            info!("use {} as default resolver", DEFAULT_DNS);
 
             Ok(c)
         })

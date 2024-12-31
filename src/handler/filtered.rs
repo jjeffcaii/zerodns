@@ -19,10 +19,9 @@ impl FilteredHandler {
 
 #[async_trait]
 impl Handler for FilteredHandler {
-    async fn handle(&self, req: &mut Message) -> Result<Option<Message>> {
-        let mut ctx = Context::default();
+    async fn handle(&self, ctx: &mut Context, req: &mut Message) -> Result<Option<Message>> {
         let mut resp = None;
-        self.root.handle(&mut ctx, req, &mut resp).await?;
+        self.root.handle(ctx, req, &mut resp).await?;
         Ok(resp)
     }
 }
@@ -123,7 +122,8 @@ mod tests {
             .build()
             .unwrap();
 
-        let res = h.handle(&mut req).await;
+        let mut ctx = Context::default();
+        let res = h.handle(&mut ctx, &mut req).await;
         assert!(res.is_ok_and(|it| it.is_none()));
     }
 }

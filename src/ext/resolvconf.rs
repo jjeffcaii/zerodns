@@ -3,6 +3,8 @@ use std::path::Path;
 
 use tokio::sync::OnceCell;
 
+pub const DEFAULT_RESOLV_CONF_PATH: &str = "/etc/resolv.conf";
+
 pub static GLOBAL_CONFIG: OnceCell<Config> = OnceCell::const_new();
 
 pub async fn read<A>(path: A) -> anyhow::Result<Config>

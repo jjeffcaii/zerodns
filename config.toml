@@ -1,9 +1,10 @@
 [global]
-resolv = "resolv.conf"
+resolv_file = "resolv.conf"
+host_file = "hosts"
 
 [server]
 listen = "0.0.0.0:5454"
-cache_size = 5000
+cache_size = 0
 
 [filters.alidns]
 kind = "proxyby"
@@ -46,27 +47,12 @@ function handle(ctx)
   end
 
   -- answer it!
+  ctx:nocache()
   ctx:answer(resp)
 
 end
 """
 
 [[rules]]
-domain = "*.cn"
-filters = ["lua"]
-
-[[rules]]
-domain = "*.apple.com"
-filters = ["alidns"]
-
-[[rules]]
-domain = "*google*"
-filters = ["opendns"]
-
-[[rules]]
-domain = "*youtube*"
-filters = ["cloudflare"]
-
-[[rules]]
 domain = "*"
-filters = ["custom", "chinadns"]
+filters = ["alidns"]

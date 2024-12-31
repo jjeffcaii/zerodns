@@ -17,7 +17,8 @@ pub struct Config {
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct GlobalConfig {
-    pub resolv: Option<String>,
+    pub resolv_file: Option<String>,
+    pub hosts_file: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
