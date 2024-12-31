@@ -104,7 +104,7 @@ mod tests {
     use crate::cache::InMemoryCache;
     use crate::client::request;
     use crate::filter::Context;
-    use crate::protocol::{Message, DNS};
+    use crate::protocol::{Class, Flags, Kind, Message, DNS};
     use std::str::FromStr;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::Duration;
@@ -131,16 +131,18 @@ mod tests {
     async fn test_udp_listen() -> anyhow::Result<()> {
         init();
 
-        let req = {
-            let raw = hex::decode(
-                "abe6010000010000000000000770616e63616b65056170706c6503636f6d0000410001",
-            )?;
+        let res = {
+            let raw = hex::decode("0001818000010003000100000770616e63616b65056170706c6503636f6d0000410001c00c00050001000050bd00220770616e63616b650963646e2d6170706c6503636f6d06616b61646e73036e657400c02f000500010000012c00170d6170706c65646f776e6c6f61640671746c63646ec01ac05d000500010000000500210d6170706c65646f776e6c6f61640671746c63646e03636f6d0563646e6d67c01ac099000600010000003c003004646e73310563646e3230036f726700097765626d6173746572c09954cace5700002a3000000e1000093a800000003c")?;
             Message::from(raw)
         };
 
-        let res = {
-            let raw = hex::decode("abe6818000010003000000000770616e63616b65056170706c6503636f6d0000410001c00c000500010000000100220770616e63616b650963646e2d6170706c6503636f6d06616b61646e73036e657400c02f000500010000000100140770616e63616b650167076161706c696d67c01ac05d0041000100000001002a0001008000002368747470733a2f2f646f682e646e732e6170706c652e636f6d2f646e732d7175657279")?;
-            Message::from(raw)
+        let req = {
+            let flags = Flags::builder().request().recursive_query(true).build();
+            Message::builder()
+                .id(0x0001)
+                .flags(flags)
+                .question("pancake.apple.com", Kind::HTTPS, Class::IN)
+                .build()?
         };
 
         let cnts = Arc::new(AtomicU64::new(0));
@@ -151,7 +153,7 @@ mod tests {
         };
 
         let cs = Arc::new(InMemoryCache::builder().build());
-        let socket = UdpSocket::bind("127.0.0.1:5454").await?;
+        let socket = UdpSocket::bind("127.0.0.1:0").await?;
         let port = socket.local_addr()?.port();
         let closer = Arc::new(Notify::new());
 
