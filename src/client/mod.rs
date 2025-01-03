@@ -1,7 +1,12 @@
+use crate::cachestr::Cachestr;
 use crate::client::doh::DoHClient;
 use crate::client::dot::DoTClient;
+use crate::error::Error;
 use crate::protocol::*;
 use crate::Result;
+use moka::future::Cache;
+use once_cell::sync::Lazy;
+use smallvec::SmallVec;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -16,6 +21,14 @@ mod tcp;
 mod udp;
 
 static DEFAULT_DNS: OnceCell<Arc<dyn Client>> = OnceCell::const_new();
+
+static DEFAULT_LOOKUPS: Lazy<LookupCache> = Lazy::new(|| {
+    let cache = Cache::builder()
+        .max_capacity(4096)
+        .time_to_live(Duration::from_secs(30))
+        .build();
+    LookupCache(cache)
+});
 
 pub async fn default_dns() -> Result<Arc<dyn Client>> {
     let v = DEFAULT_DNS
@@ -98,7 +111,7 @@ pub async fn request(dns: &DNS, request: &Message, timeout: Duration) -> Result<
             }
             Address::HostAddr(host_addr) => {
                 let domain = &host_addr.host;
-                let ip = lookup(domain, timeout).await?;
+                let ip = DEFAULT_LOOKUPS.lookup(domain, timeout).await?;
                 let addr = SocketAddr::new(IpAddr::V4(ip), host_addr.port);
                 let c = DoTClient::builder(addr)
                     .sni(domain.as_ref())
@@ -112,7 +125,7 @@ pub async fn request(dns: &DNS, request: &Message, timeout: Duration) -> Result<
                 Address::SocketAddr(addr) => DoHClient::builder(*addr).https(doh_addr.https),
                 Address::HostAddr(addr) => {
                     let domain = &addr.host;
-                    let ip = lookup(domain, timeout).await?;
+                    let ip = DEFAULT_LOOKUPS.lookup(domain, timeout).await?;
                     let mut bu = DoHClient::builder(SocketAddr::new(IpAddr::V4(ip), addr.port))
                         .host(domain)
                         .https(doh_addr.https);
@@ -130,29 +143,60 @@ pub async fn request(dns: &DNS, request: &Message, timeout: Duration) -> Result<
     }
 }
 
-#[inline]
-async fn lookup(host: &str, timeout: Duration) -> Result<Ipv4Addr> {
-    // TODO: add cache
-    let flags = Flags::builder()
-        .request()
-        .recursive_query(true)
-        .opcode(OpCode::StandardQuery)
-        .build();
-    let req0 = Message::builder()
-        .id(1234)
-        .flags(flags)
-        .question(host, Kind::A, Class::IN)
-        .build()?;
+struct LookupCache(Cache<Cachestr, SmallVec<[Ipv4Addr; 2]>>);
 
-    let v = DefaultClient.request(&req0).await?;
+impl LookupCache {
+    async fn lookup(&self, host: &str, timeout: Duration) -> Result<Ipv4Addr> {
+        let key = Cachestr::from(host);
 
-    for next in v.answers() {
-        if let Ok(RData::A(a)) = next.rdata() {
-            return Ok(a.ipaddr());
+        let res = self
+            .0
+            .try_get_with(key, Self::lookup_(host, timeout))
+            .await
+            .map_err(|e| anyhow!("lookup failed: {}", e))?;
+
+        if let Some(first) = res.first() {
+            return Ok(Clone::clone(first));
         }
+
+        bail!(Error::ResolveNothing)
     }
 
-    bail!(crate::Error::ResolveNothing)
+    #[inline]
+    async fn lookup_(host: &str, timeout: Duration) -> Result<SmallVec<[Ipv4Addr; 2]>> {
+        let flags = Flags::builder()
+            .request()
+            .recursive_query(true)
+            .opcode(OpCode::StandardQuery)
+            .build();
+
+        let id = {
+            use rand::prelude::*;
+
+            let mut rng = thread_rng();
+            rng.gen_range(1..u16::MAX)
+        };
+
+        let req0 = Message::builder()
+            .id(id)
+            .flags(flags)
+            .question(host, Kind::A, Class::IN)
+            .build()?;
+
+        let mut ret = SmallVec::<[Ipv4Addr; 2]>::new();
+        let v = DefaultClient.request(&req0).await?;
+        for next in v.answers() {
+            if let Ok(RData::A(a)) = next.rdata() {
+                ret.push(a.ipaddr());
+            }
+        }
+
+        if !ret.is_empty() {
+            return Ok(ret);
+        }
+
+        bail!(Error::ResolveNothing)
+    }
 }
 
 #[cfg(test)]

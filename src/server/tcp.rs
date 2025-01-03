@@ -90,8 +90,37 @@ where
             let req = next?;
             let handler = Clone::clone(&handler);
             let cache = Clone::clone(&cache);
-            let msg = super::helper::handle(req, handler, cache).await;
-            w.send(&msg).await?;
+            let (res, cached) = super::helper::handle(req, handler, cache).await;
+
+            if res.answer_count() > 0 {
+                for next in res.answers() {
+                    if let Ok(rdata) = next.rdata() {
+                        if cached {
+                            info!(
+                                "0x{:04x} <- {}.\t{}\t{:?}\t{:?}\t{}\t<CACHE>",
+                                res.id(),
+                                next.name(),
+                                next.time_to_live(),
+                                next.class(),
+                                next.kind(),
+                                rdata,
+                            );
+                        } else {
+                            info!(
+                                "0x{:04x} <- {}.\t{}\t{:?}\t{:?}\t{}",
+                                res.id(),
+                                next.name(),
+                                next.time_to_live(),
+                                next.class(),
+                                next.kind(),
+                                rdata,
+                            );
+                        }
+                    }
+                }
+            }
+
+            w.send(&res).await?;
         }
 
         Ok(())

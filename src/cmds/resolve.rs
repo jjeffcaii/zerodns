@@ -151,7 +151,7 @@ fn print_resolve_result(
     println!();
     println!(";; Query time: {} msec", cost.num_milliseconds());
     println!(";; SERVER: {}", &dns);
-    println!(";; WHEN: {}", &begin);
+    println!(";; WHEN: {}", begin.to_rfc2822());
     println!(";; MSG SIZE\trcvd: {}", res.len());
 
     Ok(())

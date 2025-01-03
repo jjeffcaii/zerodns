@@ -41,8 +41,37 @@ where
         h: Arc<H>,
         cache: Option<Arc<C>>,
     ) {
-        let result = helper::handle(req, h, cache).await;
-        if let Err(e) = socket.send_to(result.as_ref(), peer).await {
+        let (res, cached) = helper::handle(req, h, cache).await;
+
+        if res.answer_count() > 0 {
+            for next in res.answers() {
+                if let Ok(rdata) = next.rdata() {
+                    if cached {
+                        info!(
+                            "0x{:04x} <- {}.\t{}\t{:?}\t{:?}\t{}\t<CACHE>",
+                            res.id(),
+                            next.name(),
+                            next.time_to_live(),
+                            next.class(),
+                            next.kind(),
+                            rdata,
+                        );
+                    } else {
+                        info!(
+                            "0x{:04x} <- {}.\t{}\t{:?}\t{:?}\t{}",
+                            res.id(),
+                            next.name(),
+                            next.time_to_live(),
+                            next.class(),
+                            next.kind(),
+                            rdata,
+                        );
+                    }
+                }
+            }
+        }
+
+        if let Err(e) = socket.send_to(res.as_ref(), peer).await {
             error!("failed to reply dns response: {:?}", e);
         }
     }

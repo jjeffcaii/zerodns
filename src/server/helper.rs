@@ -30,8 +30,6 @@ fn convert_error_to_message(
     err: anyhow::Error,
     attach_questions: bool,
 ) -> Message {
-    error!("failed to handle dns request: {:?}", err);
-
     let rid = request.id();
     let rflags = request.flags();
 
@@ -43,6 +41,25 @@ fn convert_error_to_message(
             Error::ResolveNothing => rcode = RCode::NoError,
             _ => (),
         }
+    }
+
+    // log those internal server failure:
+    match rcode {
+        RCode::ServerFailure => match request.questions().next() {
+            Some(question) => {
+                let name = question.name();
+                error!("failed to handle dns request {}: {:?}", name, err);
+            }
+            None => error!("failed to handle dns request: {:?}", err),
+        },
+        RCode::NameError => match request.questions().next() {
+            Some(question) => {
+                let name = question.name();
+                warn!("failed to handle dns request {}: {:?}", name, err);
+            }
+            None => warn!("failed to handle dns request: {:?}", err),
+        },
+        _ => (),
     }
 
     let flags = {
@@ -68,13 +85,17 @@ fn convert_error_to_message(
     bu.build().unwrap()
 }
 
-pub(super) async fn handle<H, C>(mut req: Message, h: Arc<H>, cache: Option<Arc<C>>) -> Message
+pub(super) async fn handle<H, C>(
+    mut req: Message,
+    h: Arc<H>,
+    cache: Option<Arc<C>>,
+) -> (Message, bool)
 where
     H: Handler,
     C: CacheStore,
 {
     if let Err(e) = validate_request(&req) {
-        return convert_error_to_message(&req, e, false);
+        return (convert_error_to_message(&req, e, false), false);
     }
 
     if let Some(cache) = cache.as_deref() {
@@ -85,8 +106,7 @@ where
 
         if let Some(mut exist) = cached {
             exist.set_id(id);
-            debug!("use dns cache");
-            return exist;
+            return (exist, true);
         }
     }
 
@@ -110,29 +130,11 @@ where
                     req.set_id(0);
                     cache.set(&req, &msg).await;
                     req.set_id(id);
-
-                    debug!("set dns cache ok");
                 }
             }
 
-            if msg.answer_count() > 0 {
-                for next in msg.answers() {
-                    if let Ok(rdata) = next.rdata() {
-                        info!(
-                            "0x{:04x} <- {}.\t{}\t{:?}\t{:?}\t{}",
-                            msg.id(),
-                            next.name(),
-                            next.time_to_live(),
-                            next.class(),
-                            next.kind(),
-                            rdata,
-                        );
-                    }
-                }
-            }
-
-            msg
+            (msg, false)
         }
-        Err(e) => convert_error_to_message(&req, e, true),
+        Err(e) => (convert_error_to_message(&req, e, true), false),
     }
 }
