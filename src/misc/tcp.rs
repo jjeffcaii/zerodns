@@ -1,9 +1,11 @@
 use crate::Result;
 use deadpool::managed::{self, Metrics, RecycleError, RecycleResult};
+use futures::future;
 use hashbrown::HashMap;
 use once_cell::sync::Lazy;
 use parking_lot::RwLock;
 use socket2::{Domain, Protocol, SockAddr, Type};
+use std::future::Future;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -50,14 +52,8 @@ impl Manager {
     pub fn key(&self) -> Key {
         self.key
     }
-}
 
-#[async_trait::async_trait]
-impl managed::Manager for Manager {
-    type Type = (u32, TcpStream);
-    type Error = anyhow::Error;
-
-    async fn create(&self) -> std::result::Result<Self::Type, Self::Error> {
+    fn connect(&self) -> Result<TcpStream> {
         let stream: std::net::TcpStream = {
             let dst = SockAddr::from(self.key.0);
 
@@ -82,24 +78,86 @@ impl managed::Manager for Manager {
         };
 
         let socket = TcpStream::from_std(stream)?;
-        Ok((0, socket))
+
+        Ok(socket)
+    }
+}
+
+#[async_trait::async_trait]
+impl managed::Manager for Manager {
+    type Type = (u32, TcpStream);
+    type Error = anyhow::Error;
+
+    fn create(&self) -> impl Future<Output = std::result::Result<Self::Type, Self::Error>> + Send {
+        match self.connect() {
+            Ok(socket) => future::ok((0, socket)),
+            Err(e) => future::err(e),
+        }
     }
 
-    async fn recycle(&self, obj: &mut Self::Type, metrics: &Metrics) -> RecycleResult<Self::Error> {
+    fn recycle(
+        &self,
+        obj: &mut Self::Type,
+        metrics: &Metrics,
+    ) -> impl Future<Output = RecycleResult<Self::Error>> + Send {
         if metrics.created.elapsed() > self.lifetime {
-            return Err(RecycleError::Backend(anyhow!("exceed max lifetime!")));
+            return future::err(RecycleError::Backend(anyhow!("exceed max lifetime!")));
         }
 
         if obj.0 != 0 {
-            return Err(RecycleError::Backend(anyhow!("invalid connection!")));
+            return future::err(RecycleError::Backend(anyhow!("invalid connection!")));
         }
 
         if let Err(e) = validate(&obj.1) {
-            return Err(RecycleError::Backend(e));
+            return future::err(RecycleError::Backend(e));
         }
 
-        Ok(())
+        future::ok(())
     }
+
+    // async fn create(&self) -> std::result::Result<Self::Type, Self::Error> {
+    //     let stream: std::net::TcpStream = {
+    //         let dst = SockAddr::from(self.key.0);
+    //
+    //         let socket = socket2::Socket::new(Domain::IPV4, Type::STREAM, Some(Protocol::TCP))?;
+    //         socket.set_nodelay(true)?;
+    //         socket.set_keepalive(true)?;
+    //
+    //         if let Some(source) = self.key.1 {
+    //             socket.set_reuse_address(true)?;
+    //             socket.set_reuse_port(true)?;
+    //             let src = SockAddr::from(source);
+    //             socket
+    //                 .bind(&src)
+    //                 .map_err(|e| crate::Error::NetworkBindFailure(source, e))?;
+    //         }
+    //
+    //         socket.connect(&dst)?;
+    //
+    //         socket.set_nonblocking(true)?;
+    //
+    //         socket.into()
+    //     };
+    //
+    //     let socket = TcpStream::from_std(stream)?;
+    //     Ok((0, socket))
+    // }
+    //
+    // async fn recycle(&self, obj: &mut Self::Type, metrics: &Metrics) -> RecycleResult<Self::Error> {
+    //     if metrics.created.elapsed() > self.lifetime {
+    //         return Err(RecycleError::Backend(anyhow!("exceed max lifetime!")));
+    //     }
+    //
+    //     if obj.0 != 0 {
+    //         return Err(RecycleError::Backend(anyhow!("invalid connection!")));
+    //     }
+    //
+    //     if let Err(e) = validate(&obj.1) {
+    //         return Err(RecycleError::Backend(e));
+    //     }
+    //
+    //     Ok(())
+    // }
 }
 
 #[inline]

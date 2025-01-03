@@ -303,6 +303,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_wield() -> anyhow::Result<()> {
+        init();
+
+        let req = {
+            let s = "a4e5010000010000000000000a68747470733a2f2f696d0864696e6774616c6b03636f6d0000010001";
+            let b = hex::decode(s)?;
+            Message::from(b)
+        };
+
+        let res = UdpClient::aliyun().request(&req).await?;
+
+        info!("questions: {}", res.question_count());
+        info!("answers: {}", res.answer_count());
+        info!("additional: {}", res.additional_count());
+        info!("authority: {}", res.authority_count());
+
+        for next in res.answers() {
+            info!(
+                "{}.\t{}\t{:?}\t{:?}\t{}",
+                next.name(),
+                next.time_to_live(),
+                next.class(),
+                next.kind(),
+                next.rdata().unwrap()
+            );
+        }
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn test_request() -> anyhow::Result<()> {
         init();
 

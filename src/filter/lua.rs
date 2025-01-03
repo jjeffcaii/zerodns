@@ -4,7 +4,7 @@ use crate::filter::{handle_next, Context, ContextFlags, FilterFactory, Options};
 use crate::protocol::{Class, Flags, Kind, Message, DNS};
 use async_trait::async_trait;
 use mlua::prelude::*;
-use mlua::{Function, Lua, UserData, UserDataMethods};
+use mlua::{Function, Lua, UserData};
 use once_cell::sync::Lazy;
 use smallvec::SmallVec;
 use std::net::Ipv4Addr;
@@ -24,7 +24,7 @@ static RUNTIME: Lazy<runtime::Runtime> = Lazy::new(|| {
 struct LuaLoggerModule;
 
 impl UserData for LuaLoggerModule {
-    fn add_methods<'lua, M: LuaUserDataMethods<'lua, Self>>(methods: &mut M) {
+    fn add_methods<M: LuaUserDataMethods<Self>>(methods: &mut M) {
         methods.add_method("debug", |_lua, _this, msg: LuaString| {
             debug!("{}", msg.to_string_lossy());
             Ok(())
@@ -47,7 +47,7 @@ impl UserData for LuaLoggerModule {
 struct LuaJsonModule;
 
 impl UserData for LuaJsonModule {
-    fn add_methods<'lua, M: LuaUserDataMethods<'lua, Self>>(methods: &mut M) {
+    fn add_methods<M: LuaUserDataMethods<Self>>(methods: &mut M) {
         methods.add_method("encode", |lua, _, value: mlua::Value| {
             let mut b = SmallVec::<[u8; 512]>::new();
             serde_json::to_writer(&mut b, &value).map_err(LuaError::external)?;
@@ -55,7 +55,7 @@ impl UserData for LuaJsonModule {
         });
         methods.add_method("decode", |lua, _, input: LuaString| {
             let s = input.to_str()?;
-            let v = serde_json::from_str::<serde_json::Value>(s).map_err(LuaError::external)?;
+            let v = serde_json::from_str::<serde_json::Value>(&s).map_err(LuaError::external)?;
             lua.to_value(&v)
         });
     }
@@ -64,8 +64,8 @@ impl UserData for LuaJsonModule {
 #[derive(Clone)]
 struct LuaMessage(Message);
 
-impl<'lua> FromLua<'lua> for LuaMessage {
-    fn from_lua(value: LuaValue<'lua>, lua: &'lua Lua) -> LuaResult<Self> {
+impl FromLua for LuaMessage {
+    fn from_lua(value: LuaValue, lua: &Lua) -> LuaResult<Self> {
         match value {
             LuaValue::UserData(data) => Ok(Clone::clone(&*data.borrow::<Self>()?)),
             _ => unreachable!(),
@@ -74,7 +74,7 @@ impl<'lua> FromLua<'lua> for LuaMessage {
 }
 
 impl UserData for LuaMessage {
-    fn add_methods<'lua, M: LuaUserDataMethods<'lua, Self>>(methods: &mut M) {
+    fn add_methods<M: LuaUserDataMethods<Self>>(methods: &mut M) {
         methods.add_method("questions_count", |_, this, ()| Ok(this.0.question_count()));
         methods.add_method("flags", |lua, this, ()| Ok(LuaFlags(this.0.flags())));
         methods.add_method("questions", |lua, this, ()| {
@@ -138,13 +138,14 @@ impl UserData for LuaMessage {
 struct LuaContext(*mut Context, *mut Message, *mut Option<Message>);
 
 impl UserData for LuaContext {
-    fn add_fields<'lua, F: LuaUserDataFields<'lua, Self>>(fields: &mut F) {
+    fn add_fields<F: LuaUserDataFields<Self>>(fields: &mut F) {
         fields.add_field_method_get("request", |lua, this| {
             let msg = LuaMessage(Clone::clone(unsafe { this.1.as_ref().unwrap() }));
             Ok(msg)
         });
     }
-    fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
+
+    fn add_methods<M: LuaUserDataMethods<Self>>(methods: &mut M) {
         methods.add_method("nocache", |_lua, this, ()| {
             let ctx = unsafe { this.0.as_mut().unwrap() };
             ctx.flags.set(ContextFlags::NO_CACHE, true);
@@ -201,7 +202,7 @@ impl UserData for LuaContext {
 struct LuaFlags(Flags);
 
 impl UserData for LuaFlags {
-    fn add_fields<'lua, F: LuaUserDataFields<'lua, Self>>(fields: &mut F) {
+    fn add_fields<F: LuaUserDataFields<Self>>(fields: &mut F) {
         fields.add_field_method_get("opcode", |_lua, this| Ok(this.0.opcode() as u16));
         fields.add_field_method_get("response_code", |_lua, this| {
             Ok(this.0.response_code() as u8)
@@ -239,12 +240,12 @@ impl Filter for LuaFilter {
             let lua = self.vm.lock().await;
             let globals = lua.globals();
 
-            let handler = globals.get::<_, Function>("handle");
+            let handler = globals.get::<Function>("handle");
 
             if let Ok(handler) = handler {
                 lua.scope(|scope| {
                     let uctx = scope.create_userdata(LuaContext(ctx, req, res))?;
-                    let _ = handler.call::<_, Option<LuaValue>>(uctx)?;
+                    let _ = handler.call::<Option<LuaValue>>(uctx)?;
                     Ok(())
                 })?;
             }

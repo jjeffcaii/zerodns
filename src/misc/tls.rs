@@ -1,10 +1,12 @@
 use crate::Result;
 use deadpool::managed;
 use deadpool::managed::{Metrics, RecycleError, RecycleResult};
+use futures::{future, FutureExt};
 use hashbrown::HashMap;
 use once_cell::sync::Lazy;
 use parking_lot::RwLock;
 use rustls::pki_types::ServerName;
+use std::future::Future;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -30,35 +32,44 @@ pub(crate) struct Manager {
     lifetime: Duration,
 }
 
+impl Manager {
+    #[inline]
+    async fn connect(&self) -> Result<TlsStream<TcpStream>> {
+        let connector = TlsConnector::from(Clone::clone(&*DEFAULT_TLS_CLIENT_CONFIG));
+        let dnsname = ServerName::try_from(self.key.0.to_string())?;
+        let stream = TcpStream::connect(self.key.1).await?;
+        let stream = connector.connect(dnsname, stream).await?;
+        Ok(stream)
+    }
+}
+
 #[async_trait::async_trait]
 impl managed::Manager for Manager {
     type Type = (u32, TlsStream<TcpStream>);
     type Error = anyhow::Error;
 
-    async fn create(&self) -> std::result::Result<Self::Type, Self::Error> {
-        let connector = TlsConnector::from(Clone::clone(&*DEFAULT_TLS_CLIENT_CONFIG));
-        let dnsname = ServerName::try_from(self.key.0.to_string())?;
-
-        let stream = TcpStream::connect(self.key.1).await?;
-        let stream = connector.connect(dnsname, stream).await?;
-
-        Ok((0, stream))
+    fn create(&self) -> impl Future<Output = std::result::Result<Self::Type, Self::Error>> + Send {
+        self.connect().map(|it| it.map(|it| (0, it)))
     }
 
-    async fn recycle(&self, obj: &mut Self::Type, metrics: &Metrics) -> RecycleResult<Self::Error> {
+    fn recycle(
+        &self,
+        obj: &mut Self::Type,
+        metrics: &Metrics,
+    ) -> impl Future<Output = RecycleResult<Self::Error>> + Send {
         if metrics.created.elapsed() > self.lifetime {
-            return Err(RecycleError::Backend(anyhow!("exceed max lifetime!")));
+            return future::err(RecycleError::Backend(anyhow!("exceed max lifetime!")));
         }
 
         if obj.0 != 0 {
-            return Err(RecycleError::Backend(anyhow!("invalid connection!")));
+            return future::err(RecycleError::Backend(anyhow!("invalid connection!")));
         }
 
         if let Err(e) = validate(&obj.1) {
-            return Err(RecycleError::Backend(e));
+            return future::err(RecycleError::Backend(e));
         }
 
-        Ok(())
+        future::ok(())
     }
 }
 
