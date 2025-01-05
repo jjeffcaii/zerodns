@@ -80,7 +80,7 @@ pub async fn default_dns() -> Result<Arc<dyn Client>> {
 
 #[async_trait::async_trait]
 pub trait Client: Sync + Send + 'static {
-    async fn request(&self, req: &Message) -> Result<Message>;
+    async fn request(&self, request: &Message) -> Result<Message>;
 }
 
 #[derive(Debug, Default, Copy, Clone)]

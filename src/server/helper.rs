@@ -1,9 +1,10 @@
-use crate::cache::{CacheStore, CacheStoreExt};
+use crate::cache::{LoadingCache, LoadingCacheExt};
 use crate::error::Error;
-use crate::filter::{Context, ContextFlags};
+use crate::filter::Context;
 use crate::handler::Handler;
 use crate::protocol::{Flags, Message, RCode};
 use crate::{Error as ZError, Result};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 fn validate_request(req: &Message) -> Result<()> {
@@ -12,10 +13,8 @@ fn validate_request(req: &Message) -> Result<()> {
             if next.is_empty() {
                 continue;
             }
-            let ok = next
-                .iter()
-                .all(|b| matches!(*b, b'0'..=b'9' | b'a'..=b'z' | b'A'..=b'Z' | b'-' | b'_'));
-            if !ok {
+            // must be ascii visible chars:
+            if !next.iter().all(|b| (0x20u8..=0x7eu8).contains(b)) {
                 let fullname = question.name().to_string();
                 bail!(ZError::InvalidRequestFormat(fullname.into()));
             }
@@ -85,56 +84,48 @@ fn convert_error_to_message(
     bu.build().unwrap()
 }
 
-pub(super) async fn handle<H, C>(
-    mut req: Message,
-    h: Arc<H>,
-    cache: Option<Arc<C>>,
-) -> (Message, bool)
+#[inline]
+async fn handle_<H>(req: &Message, h: Arc<H>) -> Result<Message>
 where
     H: Handler,
-    C: CacheStore,
+{
+    let mut req = Clone::clone(req);
+    let mut ctx = Context::default();
+    h.handle(&mut ctx, &mut req)
+        .await?
+        .ok_or_else(|| anyhow!(ZError::ResolveNothing))
+}
+
+pub(super) async fn handle<H, C>(req: Message, h: Arc<H>, cache: Option<Arc<C>>) -> (Message, bool)
+where
+    H: Handler,
+    C: LoadingCache,
 {
     if let Err(e) = validate_request(&req) {
         return (convert_error_to_message(&req, e, false), false);
     }
 
-    if let Some(cache) = cache.as_deref() {
-        let id = req.id();
-        req.set_id(0);
-        let cached = cache.get_fixed(&req).await;
-        req.set_id(id);
+    let (res, cached) = match cache.as_deref() {
+        None => (handle_(&req, h).await, false),
+        Some(lc) => {
+            let cached = Arc::new(AtomicBool::new(true));
 
-        if let Some(mut exist) = cached {
-            exist.set_id(id);
-            return (exist, true);
+            let res = {
+                let req = Clone::clone(&req);
+                let cached = Clone::clone(&cached);
+                lc.try_get_with_fixed(req, move |req| {
+                    cached.store(false, Ordering::SeqCst);
+                    async move { handle_(&req, h).await }
+                })
+                .await
+            };
+
+            (res, cached.load(Ordering::Relaxed))
         }
-    }
+    };
 
-    let mut ctx = Context::default();
-
-    match h.handle(&mut ctx, &mut req).await {
-        Ok(result) => {
-            let mut cached = true;
-            let msg = result.unwrap_or_else(|| {
-                cached = false;
-                convert_error_to_message(&req, anyhow!(ZError::ResolveNothing), true)
-            });
-
-            if ctx.flags.contains(ContextFlags::NO_CACHE) {
-                cached = false;
-            }
-
-            if cached {
-                if let Some(cache) = &cache {
-                    let id = req.id();
-                    req.set_id(0);
-                    cache.set(&req, &msg).await;
-                    req.set_id(id);
-                }
-            }
-
-            (msg, false)
-        }
-        Err(e) => (convert_error_to_message(&req, e, true), false),
+    match res {
+        Ok(msg) => (msg, cached),
+        Err(e) => (convert_error_to_message(&req, e, true), cached),
     }
 }

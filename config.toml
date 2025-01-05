@@ -4,7 +4,7 @@ host_file = "hosts"
 
 [server]
 listen = "0.0.0.0:5454"
-cache_size = 0
+cache_size = 5000
 
 [filters.alidns]
 kind = "proxyby"

@@ -1,92 +1,152 @@
-use std::time::Instant;
-
+use crate::cache::{Loader, LoadingCache};
+use crate::protocol::Message;
+use crate::Result;
 use async_trait::async_trait;
 use moka::future::Cache;
+use std::time::{Duration, Instant};
 
-use crate::protocol::Message;
+type Key = u32;
 
-use super::CacheStore;
-
-#[derive(Clone)]
-pub(crate) struct InMemoryCache {
-    cache: Cache<Message, (Instant, Message)>,
-}
-
-impl InMemoryCache {
-    pub(crate) fn builder() -> CacheStoreBuilder {
-        CacheStoreBuilder { capacity: 1000 }
-    }
-}
-
-#[async_trait]
-impl CacheStore for InMemoryCache {
-    async fn get(&self, req: &Message) -> Option<(Instant, Message)> {
-        self.cache.get(req).await
-    }
-
-    async fn set(&self, req: &Message, resp: &Message) {
-        let key = Clone::clone(req);
-        let val = Clone::clone(resp);
-        self.cache.insert(key, (Instant::now(), val)).await;
-    }
-
-    async fn remove(&self, req: &Message) {
-        let _ = self.cache.remove(req).await;
-    }
-}
-
-pub(crate) struct CacheStoreBuilder {
+pub(crate) struct MemoryLoadingCacheBuilder {
     capacity: usize,
+    ttl: Option<Duration>,
 }
 
-impl CacheStoreBuilder {
+impl MemoryLoadingCacheBuilder {
     pub(crate) fn capacity(mut self, capacity: usize) -> Self {
         self.capacity = capacity;
         self
     }
 
-    pub(crate) fn build(self) -> InMemoryCache {
-        let Self { capacity } = self;
-        let cache = Cache::builder().max_capacity(capacity as u64).build();
+    pub(crate) fn ttl(mut self, ttl: Duration) -> Self {
+        self.ttl.replace(ttl);
+        self
+    }
 
-        InMemoryCache { cache }
+    pub(crate) fn build(self) -> MemoryLoadingCache {
+        let Self { ttl, capacity } = self;
+
+        let mut bu = Cache::builder().max_capacity(capacity as u64);
+
+        if let Some(ttl) = ttl {
+            bu = bu.time_to_live(ttl);
+        }
+
+        MemoryLoadingCache(bu.build())
+    }
+}
+
+pub(crate) struct MemoryLoadingCache(Cache<Key, (Instant, Message)>);
+
+impl Default for MemoryLoadingCache {
+    fn default() -> Self {
+        Self::builder().build()
+    }
+}
+
+impl MemoryLoadingCache {
+    pub(crate) const DEFAULT_CAPACITY: usize = 1000;
+
+    pub(crate) fn builder() -> MemoryLoadingCacheBuilder {
+        MemoryLoadingCacheBuilder {
+            capacity: Self::DEFAULT_CAPACITY,
+            ttl: None,
+        }
+    }
+
+    #[inline(always)]
+    fn generate_key(req: &Message) -> Key {
+        crc32fast::hash(&req.0[2..])
+    }
+}
+
+#[async_trait]
+impl LoadingCache for MemoryLoadingCache {
+    async fn load<L>(&self, req: Message, fut: L) -> Result<(Instant, Message)>
+    where
+        L: Loader,
+    {
+        let id = req.id();
+        let key = Self::generate_key(&req);
+        let (created_at, mut res) = self
+            .0
+            .try_get_with(key, async {
+                fut.load(req).await.map(|it| (Instant::now(), it))
+            })
+            .await
+            .map_err(|e| anyhow!("failed to loading result from cache: {:?}", e))?;
+
+        // reset id
+        res.set_id(id);
+
+        Ok((created_at, res))
+    }
+
+    async fn remove(&self, req: &Message) {
+        let key = Self::generate_key(req);
+        self.0.invalidate(&key).await;
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn init() {
-        pretty_env_logger::try_init_timed().ok();
-    }
+    use crate::protocol::{Class, Flags, Kind, RCode};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
 
     #[tokio::test]
-    async fn test_get_and_set() {
-        init();
+    async fn test_load() {
+        let id = 0x3344u16;
 
-        let req = {
-            let raw = hex::decode(
-                "f2500120000100000000000105626169647503636f6d00000100010000291000000000000000",
-            )
+        let req = Message::builder()
+            .flags(Flags::request())
+            .id(id)
+            .question("www.youtube.com", Kind::A, Class::IN)
+            .build()
             .unwrap();
-            Message::from(raw)
+
+        let cache = MemoryLoadingCache::builder().build();
+
+        let calls: Arc<AtomicUsize> = Default::default();
+
+        let fut = || {
+            let calls = Clone::clone(&calls);
+            let req = Clone::clone(&req);
+            move |req| async move {
+                calls.fetch_add(1, Ordering::SeqCst);
+                let flags = Flags::builder()
+                    .response()
+                    .rcode(RCode::NotImplemented)
+                    .build();
+                Message::builder().flags(flags).build()
+            }
         };
 
-        let res = {
-            let raw = hex::decode("f2508180000100020000000105626169647503636f6d0000010001c00c00010001000000b70004279c420ac00c00010001000000b700046ef244420000290580000000000000").unwrap();
-            Message::from(raw)
-        };
+        // call twice
+        for _ in 0..2 {
+            let req = Clone::clone(&req);
+            let result = cache.load(req, fut()).await;
+            assert!(result.is_ok_and(|(created_at, msg)| {
+                RCode::NotImplemented == msg.flags().response_code() && id == msg.id()
+            }));
+        }
 
-        let cs = InMemoryCache::builder().capacity(100).build();
-        assert!(cs.get(&req).await.is_none());
+        // but calls only one time
+        assert_eq!(1, calls.load(Ordering::SeqCst));
 
-        cs.set(&req, &res).await;
+        cache.remove(&req).await;
 
-        assert!(cs.get(&req).await.is_some_and(|(created_at, msg)| {
-            let elapsed = Instant::now().duration_since(created_at);
-            info!("elapsed: {:?}", elapsed);
-            &res == &msg
-        }));
+        // call again
+        {
+            let req = Clone::clone(&req);
+            let result = cache.load(req, fut()).await;
+            assert!(result.is_ok_and(|(created_at, msg)| {
+                RCode::NotImplemented == msg.flags().response_code() && id == msg.id()
+            }));
+        }
+
+        // should be twice because cache item has been removed already
+        assert_eq!(2, calls.load(Ordering::SeqCst));
     }
 }

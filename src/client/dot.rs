@@ -13,37 +13,27 @@ use tokio::net::TcpStream;
 use tokio_rustls::client::TlsStream;
 use tokio_util::codec::{FramedRead, FramedWrite};
 
-static GOOGLE: Lazy<DoTClient> = Lazy::new(|| {
-    let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)), DEFAULT_DOT_PORT);
-    DoTClient::builder(addr)
-        .sni("dns.google")
-        .build()
-        .expect("Cannot build Google DoT client!")
-});
+macro_rules! dotv4 {
+    ($name:ident,$sni:expr,$a:expr,$b:expr,$c:expr,$d:expr) => {
+        impl DoTClient {
+            pub fn $name() -> Self {
+                static C: Lazy<DoTClient> = Lazy::new(|| {
+                    let addr = SocketAddr::new(
+                        IpAddr::V4(Ipv4Addr::new($a, $b, $c, $d)),
+                        DEFAULT_DOT_PORT,
+                    );
+                    DoTClient::builder(addr).sni($sni).build().unwrap()
+                });
+                Clone::clone(&C)
+            }
+        }
+    };
+}
 
-static CLOUDFLARE: Lazy<DoTClient> = Lazy::new(|| {
-    let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1)), DEFAULT_DOT_PORT);
-    DoTClient::builder(addr)
-        .sni("one.one.one.one")
-        .build()
-        .expect("Cannot build Cloudflare DoT client!")
-});
-
-static DNSPOD: Lazy<DoTClient> = Lazy::new(|| {
-    let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(1, 12, 12, 12)), DEFAULT_DOT_PORT);
-    DoTClient::builder(addr)
-        .sni("dot.pub")
-        .build()
-        .expect("Cannot build DNSPod DoT client!")
-});
-
-static ALIYUN: Lazy<DoTClient> = Lazy::new(|| {
-    let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(223, 5, 5, 5)), DEFAULT_DOT_PORT);
-    DoTClient::builder(addr)
-        .sni("dns.alidns.com")
-        .build()
-        .expect("Cannot build Aliyun DoT client!")
-});
+dotv4!(google, "dns.google", 8, 8, 8, 8);
+dotv4!(cloudflare, "one.one.one.one", 1, 1, 1, 1);
+dotv4!(dospod, "dot.pub", 1, 12, 12, 12);
+dotv4!(aliyun, "dns.alidns.com", 223, 5, 5, 5);
 
 // https://www.rfc-editor.org/rfc/rfc7858.txt
 #[derive(Clone)]
@@ -54,22 +44,6 @@ pub struct DoTClient {
 
 impl DoTClient {
     pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
-
-    pub fn google() -> Self {
-        Clone::clone(&GOOGLE)
-    }
-
-    pub fn dnspod() -> Self {
-        Clone::clone(&DNSPOD)
-    }
-
-    pub fn cloudflare() -> Self {
-        Clone::clone(&CLOUDFLARE)
-    }
-
-    pub fn aliyun() -> Self {
-        Clone::clone(&ALIYUN)
-    }
 
     pub fn builder(addr: SocketAddr) -> DoTClientBuilder {
         DoTClientBuilder {

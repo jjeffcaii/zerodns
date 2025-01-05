@@ -6,7 +6,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Notify;
 use tokio_util::codec::{FramedRead, FramedWrite};
 
-use crate::cache::CacheStore;
+use crate::cache::LoadingCache;
 use crate::handler::Handler;
 use crate::protocol::Codec;
 use crate::Result;
@@ -40,7 +40,7 @@ impl<H, C> TcpServer<H, C> {
 impl<H, C> TcpServer<H, C>
 where
     H: Handler,
-    C: CacheStore,
+    C: LoadingCache,
 {
     pub async fn listen(self) -> Result<()> {
         let Self {
@@ -130,7 +130,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cache::InMemoryCache;
+    use crate::cache::MemoryLoadingCache;
     use crate::client::request;
     use crate::filter::Context;
     use crate::protocol::{Message, DNS};
@@ -179,7 +179,7 @@ mod tests {
             resp: Clone::clone(&res),
         };
 
-        let cs = Arc::new(InMemoryCache::builder().build());
+        let cs = Arc::new(MemoryLoadingCache::builder().build());
         let addr = "127.0.0.1:0".parse::<SocketAddr>()?;
 
         let listener = TcpListener::bind(addr).await?;

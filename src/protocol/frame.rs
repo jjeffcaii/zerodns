@@ -489,6 +489,10 @@ impl FlagsBuilder {
 pub struct Flags(u16);
 
 impl Flags {
+    pub fn request() -> Self {
+        Self::builder().request().recursive_query(true).build()
+    }
+
     pub fn builder() -> FlagsBuilder {
         FlagsBuilder(0)
     }

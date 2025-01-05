@@ -1,5 +1,5 @@
 use std::fmt::{Display, Formatter};
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::Duration;
 
 use crate::misc::tcp;
@@ -15,36 +15,37 @@ use crate::Result;
 
 use super::Client;
 
-/*
-[filters.opendns]
-kind = "proxyby"
-props.servers = ["tcp://208.67.222.222:443", "tcp://208.67.220.220:443"]
+macro_rules! tcpv4 {
+    ($name:ident,$a:expr,$b:expr,$c:expr,$d:expr) => {
+        impl TcpClient {
+            pub fn $name() -> Self {
+                static TC: Lazy<TcpClient> = Lazy::new(|| {
+                    let ip = IpAddr::V4(Ipv4Addr::new($a, $b, $c, $d));
+                    TcpClient::builder(SocketAddr::new(ip, 53)).build().unwrap()
+                });
+                Clone::clone(&TC)
+            }
+        }
+    };
+    ($name:ident,$a:expr,$b:expr,$c:expr,$d:expr,$port:expr) => {
+        impl TcpClient {
+            pub fn $name() -> Self {
+                static TC: Lazy<TcpClient> = Lazy::new(|| {
+                    let ip = IpAddr::V4(Ipv4Addr::new($a, $b, $c, $d));
+                    TcpClient::builder(SocketAddr::new(ip, $port))
+                        .build()
+                        .unwrap()
+                });
+                Clone::clone(&TC)
+            }
+        }
+    };
+}
 
- */
-
-static OPENDNS: Lazy<TcpClient> = Lazy::new(|| {
-    TcpClient::builder("208.67.222.222:443".parse().unwrap())
-        .build()
-        .unwrap()
-});
-
-static GOOGLE: Lazy<TcpClient> = Lazy::new(|| {
-    TcpClient::builder("8.8.8.8:53".parse().unwrap())
-        .build()
-        .unwrap()
-});
-
-static ALIYUN: Lazy<TcpClient> = Lazy::new(|| {
-    TcpClient::builder("223.5.5.5:53".parse().unwrap())
-        .build()
-        .unwrap()
-});
-
-static CLOUDFLARE: Lazy<TcpClient> = Lazy::new(|| {
-    TcpClient::builder("1.1.1.1:53".parse().unwrap())
-        .build()
-        .unwrap()
-});
+tcpv4!(opendns, 208, 67, 222, 222, 443);
+tcpv4!(google, 8, 8, 8, 8);
+tcpv4!(aliyun, 223, 5, 5, 5);
+tcpv4!(cloudflare, 1, 1, 1, 1);
 
 #[derive(Clone)]
 pub struct TcpClient {
@@ -59,22 +60,6 @@ impl TcpClient {
             timeout: Duration::from_secs(5),
             source: None,
         }
-    }
-
-    pub fn google() -> Self {
-        Clone::clone(&*GOOGLE)
-    }
-
-    pub fn opendns() -> Self {
-        Clone::clone(&*OPENDNS)
-    }
-
-    pub fn aliyun() -> Self {
-        Clone::clone(&*ALIYUN)
-    }
-
-    pub fn cloudflare() -> Self {
-        Clone::clone(&*CLOUDFLARE)
     }
 
     async fn request_with_socket(&self, req: &Message, socket: &mut TcpStream) -> Result<Message> {

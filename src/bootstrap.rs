@@ -5,7 +5,7 @@ use socket2::{Domain, Protocol, Type};
 use tokio::net::{TcpListener, UdpSocket};
 use tokio::sync::Notify;
 
-use crate::cache::InMemoryCache;
+use crate::cache::MemoryLoadingCache;
 use crate::config::Config;
 use crate::handler::RuledHandler;
 use crate::server::{TcpServer, UdpServer};
@@ -34,7 +34,9 @@ pub async fn run(c: Config, closer: Arc<Notify>) -> anyhow::Result<()> {
             if *size == 0 {
                 None
             } else {
-                Some(Arc::new(InMemoryCache::builder().capacity(*size).build()))
+                Some(Arc::new(
+                    MemoryLoadingCache::builder().capacity(*size).build(),
+                ))
             }
         }
     };

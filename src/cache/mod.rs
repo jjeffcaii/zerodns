@@ -1,59 +1,81 @@
 use std::time::Instant;
 
+use crate::Result;
 use async_trait::async_trait;
 use byteorder::{BigEndian, ByteOrder};
+pub(crate) use memory::MemoryLoadingCache;
 use smallvec::SmallVec;
-
-pub(crate) use memory::InMemoryCache;
+use std::future::Future;
 
 use crate::protocol::Message;
 
 mod memory;
 
-#[async_trait]
-pub trait CacheStore: Send + Sync + 'static {
-    async fn get(&self, req: &Message) -> Option<(Instant, Message)>;
+pub trait Loader: Send {
+    fn load(self, req: Message) -> impl Future<Output = Result<Message>> + Send;
+}
 
-    async fn set(&self, req: &Message, resp: &Message);
+impl<A, T> Loader for A
+where
+    A: Send + FnOnce(Message) -> T,
+    T: Send + Future<Output = Result<Message>>,
+{
+    fn load(self, req: Message) -> impl Future<Output = Result<Message>> + Send {
+        self(req)
+    }
+}
+
+#[async_trait]
+pub trait LoadingCache: Send + Sync + 'static {
+    async fn load<L>(&self, req: Message, fut: L) -> Result<(Instant, Message)>
+    where
+        L: Loader;
 
     async fn remove(&self, req: &Message);
 }
 
 #[async_trait]
-pub(crate) trait CacheStoreExt {
-    async fn get_fixed(&self, req: &Message) -> Option<Message>;
+pub(crate) trait LoadingCacheExt: Send + Sync + 'static {
+    async fn try_get_with_fixed<L>(&self, req: Message, fut: L) -> Result<Message>
+    where
+        L: Loader;
 }
 
 #[async_trait]
-impl<A> CacheStoreExt for A
+impl<A> LoadingCacheExt for A
 where
-    A: CacheStore,
+    A: LoadingCache,
 {
-    async fn get_fixed(&self, req: &Message) -> Option<Message> {
-        match self.get(req).await {
-            Some((created_at, mut msg)) => {
-                let elapsed = Instant::now().duration_since(created_at).as_secs();
+    async fn try_get_with_fixed<L>(&self, req: Message, fut: L) -> Result<Message>
+    where
+        L: Loader,
+    {
+        // 1. compute the original cached value
+        let (created_at, mut value) = self.load(Clone::clone(&req), fut).await?;
 
-                let mut rewrites = SmallVec::<[(u16, u32); 4]>::new();
-
-                for next in msg.answers() {
-                    let ttl = next.time_to_live();
-                    let ttl = (ttl as i64) - (elapsed as i64);
-                    if ttl <= 0 {
-                        self.remove(req).await;
-                        return None;
-                    }
-                    rewrites.push((next.time_to_live_pos() as u16, ttl as u32));
-                }
-
-                // rewrite ttl
-                for (pos, ttl) in rewrites {
-                    BigEndian::write_u32(&mut msg.0[pos as usize..], ttl);
-                }
-
-                Some(msg)
+        // 2. compute the newest list of time-to-live
+        let mut rewrites = SmallVec::<[(u16, u32); 4]>::new();
+        let mut remove = false;
+        let elapsed = Instant::now().duration_since(created_at).as_secs();
+        for next in value.answers() {
+            let mut ttl = (next.time_to_live() as i64) - (elapsed as i64);
+            if ttl <= 0 {
+                remove = true;
+                ttl = 1; // 1s at least
             }
-            None => None,
+            rewrites.push((next.time_to_live_pos() as u16, ttl as u32));
         }
+
+        // 3. remove expired cache
+        if remove {
+            self.remove(&req).await;
+        }
+
+        // 4. rewrite ttl
+        for (pos, ttl) in rewrites {
+            BigEndian::write_u32(&mut value.0[pos as usize..], ttl);
+        }
+
+        Ok(value)
     }
 }

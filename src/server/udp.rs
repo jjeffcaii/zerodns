@@ -7,7 +7,7 @@ use tokio_util::codec::BytesCodec;
 use tokio_util::udp::UdpFramed;
 
 use super::helper;
-use crate::cache::CacheStore;
+use crate::cache::LoadingCache;
 use crate::handler::Handler;
 use crate::protocol::Message;
 use crate::Result;
@@ -32,7 +32,7 @@ impl<H, C> UdpServer<H, C> {
 impl<H, C> UdpServer<H, C>
 where
     H: Handler,
-    C: CacheStore,
+    C: LoadingCache,
 {
     async fn handle_request(
         socket: Arc<UdpSocket>,
@@ -130,7 +130,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cache::InMemoryCache;
+    use crate::cache::MemoryLoadingCache;
     use crate::client::request;
     use crate::filter::Context;
     use crate::protocol::{Class, Flags, Kind, Message, DNS};
@@ -181,7 +181,7 @@ mod tests {
             resp: Clone::clone(&res),
         };
 
-        let cs = Arc::new(InMemoryCache::builder().build());
+        let cs = Arc::new(MemoryLoadingCache::builder().build());
         let socket = UdpSocket::bind("127.0.0.1:0").await?;
         let port = socket.local_addr()?.port();
         let closer = Arc::new(Notify::new());

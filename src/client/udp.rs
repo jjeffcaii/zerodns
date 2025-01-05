@@ -1,8 +1,9 @@
 use futures::StreamExt;
 use hashbrown::HashMap;
 use once_cell::sync::Lazy;
+use rand::{thread_rng, Rng};
 use socket2::{Domain, Protocol, Type};
-use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -16,29 +17,40 @@ use crate::{Error as ZeroError, Result};
 
 use super::Client;
 
-static GOOGLE: Lazy<UdpClient> =
-    Lazy::new(|| UdpClient::builder("8.8.8.8:53".parse().unwrap()).build());
+macro_rules! udpv4 {
+    ($name:ident,$a:expr,$b:expr,$c:expr,$d:expr) => {
+        impl UdpClient {
+            pub fn $name() -> Self {
+                static UC: Lazy<UdpClient> = Lazy::new(|| {
+                    let ip = IpAddr::V4(Ipv4Addr::new($a, $b, $c, $d));
+                    UdpClient::builder(SocketAddr::new(ip, 53)).build()
+                });
+                Clone::clone(&UC)
+            }
+        }
+    };
+    ($name:ident,$a:expr,$b:expr,$c:expr,$d:expr,$port:expr) => {
+        impl UdpClient {
+            pub fn $name() -> Self {
+                static UC: Lazy<UdpClient> = Lazy::new(|| {
+                    let ip = IpAddr::V4(Ipv4Addr::new($a, $b, $c, $d));
+                    UdpClient::builder(SocketAddr::new(ip, $port)).build()
+                });
+                Clone::clone(&UC)
+            }
+        }
+    };
+}
 
-static GOOGLE2: Lazy<UdpClient> =
-    Lazy::new(|| UdpClient::builder("8.8.4.4:53".parse().unwrap()).build());
-
-static CLOUDFLARE: Lazy<UdpClient> =
-    Lazy::new(|| UdpClient::builder("1.1.1.1:53".parse().unwrap()).build());
-
-static CLOUDFLARE2: Lazy<UdpClient> =
-    Lazy::new(|| UdpClient::builder("1.0.0.1:53".parse().unwrap()).build());
-
-static OPENDNS: Lazy<UdpClient> =
-    Lazy::new(|| UdpClient::builder("208.67.222.222:53".parse().unwrap()).build());
-
-static OPENDNS2: Lazy<UdpClient> =
-    Lazy::new(|| UdpClient::builder("208.67.220.220:53".parse().unwrap()).build());
-
-static ALIYUN: Lazy<UdpClient> =
-    Lazy::new(|| UdpClient::builder("223.5.5.5:53".parse().unwrap()).build());
-
-static ALIYUN2: Lazy<UdpClient> =
-    Lazy::new(|| UdpClient::builder("223.6.6.6:53".parse().unwrap()).build());
+udpv4!(local, 127, 0, 0, 1);
+udpv4!(google, 8, 8, 8, 8);
+udpv4!(google2, 8, 8, 4, 4);
+udpv4!(cloudflare, 1, 1, 1, 1);
+udpv4!(cloudflare2, 1, 0, 0, 1);
+udpv4!(opendns, 208, 67, 222, 222);
+udpv4!(opendns2, 208, 67, 220, 220);
+udpv4!(aliyun, 223, 5, 5, 5);
+udpv4!(aliyun2, 223, 6, 6, 6);
 
 #[derive(Debug, Clone)]
 pub struct UdpClient {
@@ -47,43 +59,11 @@ pub struct UdpClient {
 }
 
 impl UdpClient {
-    pub fn google() -> Self {
-        Clone::clone(&GOOGLE)
-    }
-
-    pub fn google2() -> Self {
-        Clone::clone(&GOOGLE2)
-    }
-
-    pub fn cloudflare() -> Self {
-        Clone::clone(&ALIYUN)
-    }
-
-    pub fn cloudflare2() -> Self {
-        Clone::clone(&CLOUDFLARE2)
-    }
-
-    pub fn aliyun() -> Self {
-        Clone::clone(&ALIYUN)
-    }
-
-    pub fn aliyun2() -> Self {
-        Clone::clone(&ALIYUN2)
-    }
-
-    pub fn opendns() -> Self {
-        Clone::clone(&OPENDNS)
-    }
-
-    pub fn opendns2() -> Self {
-        Clone::clone(&OPENDNS2)
-    }
-
     pub fn builder(addr: SocketAddr) -> UdpClientBuilder {
         UdpClientBuilder {
             inner: Self {
                 addr,
-                timeout: Duration::from_secs(3),
+                timeout: Duration::from_secs(15),
             },
         }
     }
@@ -119,7 +99,7 @@ type Handlers = Arc<Mutex<HashMap<u16, oneshot::Sender<Message>>>>;
 struct MultiplexUdpClient {
     queue: mpsc::Sender<Message>,
     handlers: Handlers,
-    seqs: Arc<AtomicU16>,
+    seq: Arc<AtomicU16>,
 }
 
 impl MultiplexUdpClient {
@@ -204,16 +184,21 @@ impl MultiplexUdpClient {
             }
         });
 
+        let seq = {
+            let mut rng = thread_rng();
+            rng.gen_range(1..u16::MAX)
+        };
+
         Self {
             queue: tx,
             handlers,
-            seqs: Default::default(),
+            seq: Arc::new(AtomicU16::new(seq)),
         }
     }
 
     #[inline]
     async fn next_seq(&self) -> u16 {
-        self.seqs.fetch_add(1, Ordering::SeqCst)
+        self.seq.fetch_add(1, Ordering::SeqCst)
     }
 
     async fn request(&self, req: &Message, timeout: Duration) -> Result<Message> {
@@ -303,7 +288,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_wield() -> anyhow::Result<()> {
+    async fn test_weird() -> anyhow::Result<()> {
         init();
 
         let req = {
@@ -312,7 +297,15 @@ mod tests {
             Message::from(b)
         };
 
-        let res = UdpClient::aliyun().request(&req).await?;
+        // let req = Message::builder()
+        //     .flags(Flags::request())
+        //     .question("https://foobar.com", Kind::A, Class::IN)
+        //     .build();
+
+        let c = UdpClient::builder("127.0.0.1:5454".parse().unwrap()).build();
+        let res = c.request(&req).await?;
+
+        // let res = UdpClient::google().request(&req).await?;
 
         info!("questions: {}", res.question_count());
         info!("answers: {}", res.answer_count());
