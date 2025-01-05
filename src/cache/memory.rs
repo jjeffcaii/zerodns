@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use moka::future::Cache;
 use std::time::{Duration, Instant};
 
-type Key = u32;
+type Key = [u8; 32];
 
 pub(crate) struct MemoryLoadingCacheBuilder {
     capacity: usize,
@@ -56,7 +56,11 @@ impl MemoryLoadingCache {
 
     #[inline(always)]
     fn generate_key(req: &Message) -> Key {
-        crc32fast::hash(&req.0[2..])
+        use sha2::{Digest, Sha256};
+
+        let mut h = Sha256::new();
+        h.update(&req.0[2..]);
+        h.finalize().into()
     }
 }
 

@@ -68,7 +68,7 @@ string_cache = "0.8"
 rand = "0.8"
 resolv-conf = "0.7"
 bitflags = "2.6"
-crc32fast = "1.4"
+sha2 = "0.10"
 
 [dev-dependencies]
 hex = "0.4"
