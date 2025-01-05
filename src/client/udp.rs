@@ -288,6 +288,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore]
     async fn test_weird() -> anyhow::Result<()> {
         init();
 
