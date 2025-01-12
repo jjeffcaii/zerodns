@@ -7,6 +7,7 @@ use smallvec::{smallvec, SmallVec};
 use std::fmt::{Display, Formatter};
 use std::io::{self, Write};
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::AsyncWriteExt;
@@ -14,21 +15,6 @@ use tokio::net::TcpStream;
 use tokio_util::codec::FramedRead;
 
 use crate::Error::NetworkFailure;
-
-static CLOUDFLARE: Lazy<DoHClient> =
-    Lazy::new(|| DoHClient::builder("1.1.1.1:443".parse().unwrap()).build());
-
-static ALIYUN: Lazy<DoHClient> = Lazy::new(|| {
-    DoHClient::builder("223.5.5.5:443".parse().unwrap())
-        .host("dns.alidns.com")
-        .build()
-});
-
-static GOOGLE: Lazy<DoHClient> = Lazy::new(|| {
-    DoHClient::builder("8.8.8.8:443".parse().unwrap())
-        .host("dns.google")
-        .build()
-});
 
 pub struct DoHClientBuilder<'a> {
     https: bool,
@@ -105,15 +91,71 @@ impl DoHClient {
     }
 
     pub fn google() -> Self {
-        Clone::clone(&*GOOGLE)
+        static CLIENTS: Lazy<[DoHClient; 2]> = Lazy::new(|| {
+            [
+                DoHClient::builder("8.8.8.8:443".parse().unwrap())
+                    .host("dns.google")
+                    .build(),
+                DoHClient::builder("8.8.4.4:443".parse().unwrap())
+                    .host("dns.google")
+                    .build(),
+            ]
+        });
+
+        static IDX: Lazy<AtomicUsize> = Lazy::new(AtomicUsize::default);
+        let idx = IDX.fetch_add(1, Ordering::SeqCst) % CLIENTS.len();
+
+        Clone::clone(&CLIENTS[idx])
     }
 
     pub fn cloudflare() -> Self {
-        Clone::clone(&*CLOUDFLARE)
+        static CLIENTS: Lazy<[DoHClient; 2]> = Lazy::new(|| {
+            [
+                DoHClient::builder("1.1.1.1:443".parse().unwrap()).build(),
+                DoHClient::builder("1.0.0.1:443".parse().unwrap()).build(),
+            ]
+        });
+        static IDX: Lazy<AtomicUsize> = Lazy::new(AtomicUsize::default);
+
+        let i = IDX.fetch_add(1, Ordering::SeqCst) % CLIENTS.len();
+
+        Clone::clone(&CLIENTS[i])
     }
 
     pub fn aliyun() -> Self {
-        Clone::clone(&*ALIYUN)
+        static CLIENTS: Lazy<[DoHClient; 2]> = Lazy::new(|| {
+            [
+                DoHClient::builder("223.5.5.5:443".parse().unwrap())
+                    .host("dns.alidns.com")
+                    .build(),
+                DoHClient::builder("223.6.6.6:443".parse().unwrap())
+                    .host("dns.alidns.com")
+                    .build(),
+            ]
+        });
+        static IDX: Lazy<AtomicUsize> = Lazy::new(AtomicUsize::default);
+
+        let i = IDX.fetch_add(1, Ordering::SeqCst) % CLIENTS.len();
+
+        Clone::clone(&CLIENTS[i])
+    }
+
+    pub fn quad9() -> Self {
+        static CLIENTS: Lazy<[DoHClient; 2]> = Lazy::new(|| {
+            [
+                DoHClient::builder("9.9.9.9:443".parse().unwrap())
+                    .host("dns.quad9.net")
+                    .build(),
+                DoHClient::builder("149.112.112.112:443".parse().unwrap())
+                    .host("dns.quad9.net")
+                    .build(),
+            ]
+        });
+        static IDX: Lazy<AtomicUsize> = Lazy::new(AtomicUsize::default);
+
+        let i = IDX.fetch_add(1, Ordering::SeqCst) % CLIENTS.len();
+
+        Clone::clone(&CLIENTS[i])
     }
 
     #[inline]
@@ -240,8 +282,13 @@ mod tests {
 
         for c in [
             DoHClient::aliyun(),
+            DoHClient::aliyun(),
+            DoHClient::cloudflare(),
             DoHClient::cloudflare(),
             DoHClient::google(),
+            DoHClient::google(),
+            DoHClient::quad9(),
+            DoHClient::quad9(),
         ] {
             for question in ["www.youtube.com", "www.taobao.com", "x.com"] {
                 info!("-------- resolve {} from {} --------", question, &c);

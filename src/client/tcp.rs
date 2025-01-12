@@ -84,8 +84,12 @@ impl TcpClient {
 
 impl Display for TcpClient {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let key = self.pool.manager().key();
-        write!(f, "tcp://{}", key.0)?;
+        let addr = self.pool.manager().key().0;
+        if addr.port() == crate::DEFAULT_UDP_PORT {
+            write!(f, "tcp://{}", addr.ip())?;
+        } else {
+            write!(f, "tcp://{}", addr)?;
+        }
         Ok(())
     }
 }

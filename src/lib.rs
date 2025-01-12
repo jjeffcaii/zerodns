@@ -30,7 +30,6 @@ pub(crate) mod cache;
 pub mod client;
 pub mod config;
 pub(crate) mod error;
-pub mod ext;
 pub mod filter;
 pub mod handler;
 pub mod logger;

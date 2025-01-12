@@ -1,18 +1,34 @@
 use super::{handle_next, Context, Filter, FilterFactory, Options};
-use crate::{protocol::*, Result};
+use crate::{cachestr::Cachestr, protocol::*, Result};
 use hashbrown::HashMap;
+use once_cell::sync::Lazy;
 use smallvec::SmallVec;
+use std::io::{BufRead, BufReader};
 use std::net::IpAddr;
+use std::path::PathBuf;
 use std::sync::Arc;
 use toml::Value;
 
-#[derive(Debug, Default, Clone)]
-struct Record {
-    data: Vec<IpAddr>,
+type HostValue = SmallVec<[IpAddr; 1]>;
+type HostMap = HashMap<Cachestr, HostValue>;
+
+#[derive(Debug, Copy, Clone)]
+enum IpOctets {
+    V4([u8; 4]),
+    V6([u8; 16]),
+}
+
+impl AsRef<[u8]> for IpOctets {
+    fn as_ref(&self) -> &[u8] {
+        match self {
+            IpOctets::V4(b) => &b[..],
+            IpOctets::V6(b) => &b[..],
+        }
+    }
 }
 
 pub(crate) struct HostsFilter {
-    hosts: Arc<HashMap<String, Record>>,
+    hosts: Arc<HostMap>,
     next: Option<Box<dyn Filter>>,
 }
 
@@ -36,27 +52,21 @@ impl Filter for HostsFilter {
                     sb.extend_from_slice(name);
                     sb.push(b'.');
                 }
-                let k = unsafe { std::str::from_utf8_unchecked(&sb[..]) };
+                let k = Cachestr::from(unsafe { std::str::from_utf8_unchecked(&sb[..]) });
 
-                let mut ips = vec![];
+                let mut ips = SmallVec::<[IpOctets; 1]>::new();
 
-                if let Some(v) = self.hosts.get(k) {
-                    for ip in &v.data {
+                if let Some(v) = self.hosts.get(&k) {
+                    for ip in v.iter() {
                         match question.kind() {
                             Kind::A => {
                                 if let IpAddr::V4(v4) = ip {
-                                    let octets = v4.octets();
-                                    let mut x = SmallVec::<[u8; 16]>::new();
-                                    x.extend_from_slice(&octets[..]);
-                                    ips.push(x);
+                                    ips.push(IpOctets::V4(v4.octets()));
                                 }
                             }
                             Kind::AAAA => {
                                 if let IpAddr::V6(v6) = ip {
-                                    let octets = v6.octets();
-                                    let mut x = SmallVec::<[u8; 16]>::new();
-                                    x.extend_from_slice(&octets[..]);
-                                    ips.push(x);
+                                    ips.push(IpOctets::V6(v6.octets()));
                                 }
                             }
                             _ => {
@@ -99,7 +109,7 @@ impl Filter for HostsFilter {
                                 question.kind(),
                                 question.class(),
                                 300,
-                                &ip[..],
+                                ip.as_ref(),
                             );
                         }
                     }
@@ -118,35 +128,79 @@ impl Filter for HostsFilter {
 }
 
 #[derive(Debug, Clone, Default)]
-pub(crate) struct HostsFilterFactory {
-    hosts: Arc<HashMap<String, Record>>,
-}
+pub(crate) struct HostsFilterFactory(Arc<HostMap>);
 
 impl HostsFilterFactory {
+    fn read_hosts_file(path: &PathBuf, dst: &mut HostMap) -> Result<()> {
+        let f = std::fs::File::open(path)?;
+
+        let mut r = BufReader::new(f);
+
+        let mut s = String::new();
+
+        loop {
+            s.clear();
+
+            let n = r.read_line(&mut s)?;
+            if n == 0 {
+                break;
+            }
+
+            let line = s.trim();
+
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+
+            static REGEX_SP: Lazy<regex::Regex> =
+                Lazy::new(|| regex::Regex::new(r"[\t ]+").unwrap());
+
+            let mut sp = REGEX_SP.split(line);
+
+            if let Some(first) = sp.next() {
+                let ip = first.parse::<IpAddr>()?;
+
+                for host in sp {
+                    Self::push_into(host, ip, dst);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     #[inline]
-    fn read_hosts(src: &Value, dst: &mut HashMap<String, Record>) -> Result<()> {
+    fn push_into(host: &str, ip: IpAddr, dst: &mut HostMap) {
+        let host = host.trim();
+        let host = if host.ends_with('.') {
+            Cachestr::from(host)
+        } else {
+            Cachestr::from(format!("{}.", host))
+        };
+        let ent = dst.entry(Clone::clone(&host)).or_default();
+        if !ent.contains(&ip) {
+            ent.push(ip);
+            debug!("detect new host: {}\t{}", ip, host);
+        }
+    }
+
+    #[inline]
+    fn read_hosts(src: &Value, dst: &mut HostMap) -> Result<()> {
         if let Some(tbl) = src.as_table() {
             for (k, v) in tbl.iter() {
-                let mut record = Record::default();
+                let ip = k.parse::<IpAddr>()?;
                 match v {
-                    Value::String(vv) => {
-                        record.data.push(vv.parse::<IpAddr>()?);
+                    Value::String(host) => {
+                        Self::push_into(host, ip, dst);
                     }
                     Value::Array(arr) => {
                         for next in arr {
-                            if let Some(ss) = next.as_str() {
-                                record.data.push(ss.parse::<IpAddr>()?);
-                            }
+                            let host = next.as_str().ok_or_else(|| anyhow!("invalid config"))?;
+                            Self::push_into(host, ip, dst);
                         }
                     }
                     _ => bail!("invalid config"),
                 }
-
-                let trimmed = k.trim_matches('.');
-                if trimmed.is_empty() {
-                    continue;
-                }
-                dst.insert(format!("{}.", trimmed), record);
             }
         }
 
@@ -158,14 +212,32 @@ impl TryFrom<&Options> for HostsFilterFactory {
     type Error = anyhow::Error;
 
     fn try_from(value: &Options) -> std::result::Result<Self, Self::Error> {
-        let mut hosts: HashMap<String, Record> = Default::default();
+        let mut dst = HostMap::new();
+
+        // 1. read property of 'hosts'
         if let Some(it) = value.get("hosts") {
-            Self::read_hosts(it, &mut hosts)?;
+            Self::read_hosts(it, &mut dst)?;
         }
 
-        Ok(Self {
-            hosts: Arc::new(hosts),
-        })
+        // 2. read property of 'include/includes'
+        for field in ["include", "includes"] {
+            if let Some(files) = value.get(field) {
+                match files {
+                    Value::String(file) => {
+                        Self::read_hosts_file(&PathBuf::from(file), &mut dst)?;
+                    }
+                    Value::Array(arr) => {
+                        for item in arr {
+                            let file = item.as_str().ok_or_else(|| anyhow!("invalid config"))?;
+                            Self::read_hosts_file(&PathBuf::from(file), &mut dst)?;
+                        }
+                    }
+                    _ => bail!("invalid config"),
+                }
+            }
+        }
+
+        Ok(Self(Arc::new(dst)))
     }
 }
 
@@ -174,7 +246,7 @@ impl FilterFactory for HostsFilterFactory {
 
     fn get(&self) -> Result<Self::Item> {
         Ok(Self::Item {
-            hosts: Arc::clone(&self.hosts),
+            hosts: Clone::clone(&self.0),
             next: None,
         })
     }
@@ -196,7 +268,8 @@ mod tests {
 
         let opts = toml::from_str::<Options>(
             r#"
-        hosts = { "one.one.one.one" = ["1.1.1.1", "1.0.0.1"] }
+        hosts = { "1.1.1.1" = "one.one.one.one", "1.0.0.1" = ["one.one.one.one"] }
+        includes = ["/etc/hosts"]
         "#,
         )?;
 

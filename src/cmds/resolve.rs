@@ -32,20 +32,21 @@ pub(crate) async fn execute(sm: &ArgMatches) -> Result<()> {
     let dns = {
         match sm.get_one::<String>("server") {
             None => {
-                use resolv_conf::ScopedIp;
-                use zerodns::ext::resolvconf;
+                use resolv_conf::{Config, ScopedIp};
 
-                let c = resolvconf::read(resolvconf::DEFAULT_RESOLV_CONF_PATH).await?;
-                let first = c.nameservers.first().ok_or_else(|| {
-                    anyhow!(
-                        "no nameserver found in {}!",
-                        resolvconf::DEFAULT_RESOLV_CONF_PATH
-                    )
-                })?;
+                let c = {
+                    let b = std::fs::read("/etc/resolv.conf")?;
+                    Config::parse(&b[..])?
+                };
 
                 if c.timeout > 0 {
                     timeout = Duration::from_secs(c.timeout as u64);
                 }
+
+                let first = c
+                    .nameservers
+                    .first()
+                    .ok_or_else(|| anyhow!("no available nameserver!"))?;
 
                 let ipaddr = match first {
                     ScopedIp::V4(v4) => IpAddr::V4(*v4),

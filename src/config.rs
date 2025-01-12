@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use crate::logger::Config as LoggerConfig;
+use crate::logger;
 use serde::{Deserialize, Serialize};
 use toml::Value;
 
@@ -15,8 +15,16 @@ pub struct Config {
     pub rules: Vec<Rule>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LoggerConfig {
+    pub main: Option<logger::Config>,
+    pub access: Option<logger::Config>,
+}
+
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct GlobalConfig {
+    #[serde(default)]
+    pub nameservers: Vec<String>,
     pub resolv_file: Option<String>,
     pub hosts_file: Option<String>,
 }

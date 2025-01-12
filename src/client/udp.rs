@@ -3,8 +3,9 @@ use hashbrown::HashMap;
 use once_cell::sync::Lazy;
 use rand::{thread_rng, Rng};
 use socket2::{Domain, Protocol, Type};
+use std::fmt::{Display, Formatter};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
-use std::sync::atomic::{AtomicU16, Ordering};
+use std::sync::atomic::{AtomicU16, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::UdpSocket;
@@ -18,44 +19,60 @@ use crate::{Error as ZeroError, Result};
 use super::Client;
 
 macro_rules! udpv4 {
-    ($name:ident,$a:expr,$b:expr,$c:expr,$d:expr) => {
+    ($name:ident,$ip:expr) => {
         impl UdpClient {
             pub fn $name() -> Self {
                 static UC: Lazy<UdpClient> = Lazy::new(|| {
-                    let ip = IpAddr::V4(Ipv4Addr::new($a, $b, $c, $d));
+                    let ip = $ip.parse::<IpAddr>().unwrap();
                     UdpClient::builder(SocketAddr::new(ip, 53)).build()
                 });
                 Clone::clone(&UC)
             }
         }
     };
-    ($name:ident,$a:expr,$b:expr,$c:expr,$d:expr,$port:expr) => {
+    ($name:ident,$ip1:expr,$ip2:expr) => {
         impl UdpClient {
             pub fn $name() -> Self {
-                static UC: Lazy<UdpClient> = Lazy::new(|| {
-                    let ip = IpAddr::V4(Ipv4Addr::new($a, $b, $c, $d));
-                    UdpClient::builder(SocketAddr::new(ip, $port)).build()
+                static UC: Lazy<[UdpClient; 2]> = Lazy::new(|| {
+                    let ip1 = $ip1.parse::<IpAddr>().unwrap();
+                    let ip2 = $ip2.parse::<IpAddr>().unwrap();
+                    [
+                        UdpClient::builder(SocketAddr::new(ip1, 53)).build(),
+                        UdpClient::builder(SocketAddr::new(ip2, 53)).build(),
+                    ]
                 });
-                Clone::clone(&UC)
+
+                static IDX: Lazy<AtomicUsize> = Lazy::new(|| AtomicUsize::new(0));
+                let i = IDX.fetch_add(1, Ordering::Relaxed) & UC.len();
+                Clone::clone(&UC[i])
             }
         }
     };
 }
 
-udpv4!(local, 127, 0, 0, 1);
-udpv4!(google, 8, 8, 8, 8);
-udpv4!(google2, 8, 8, 4, 4);
-udpv4!(cloudflare, 1, 1, 1, 1);
-udpv4!(cloudflare2, 1, 0, 0, 1);
-udpv4!(opendns, 208, 67, 222, 222);
-udpv4!(opendns2, 208, 67, 220, 220);
-udpv4!(aliyun, 223, 5, 5, 5);
-udpv4!(aliyun2, 223, 6, 6, 6);
+udpv4!(local, "127.0.0.1");
+udpv4!(google, "8.8.8.8", "8.8.4.4");
+udpv4!(cloudflare, "1.1.1.1", "1.0.0.1");
+udpv4!(opendns, "208.67.222.222", "208.67.220.220");
+udpv4!(aliyun, "223.5.5.5", "223.6.6.6");
+udpv4!(quad9, "9.9.9.9", "149.112.112.112");
 
 #[derive(Debug, Clone)]
 pub struct UdpClient {
     addr: SocketAddr,
     timeout: Duration,
+}
+
+impl Display for UdpClient {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        if self.addr.port() == crate::DEFAULT_UDP_PORT {
+            write!(f, "udp://{}", &self.addr.ip())?;
+        } else {
+            write!(f, "udp://{}", &self.addr)?;
+        }
+
+        Ok(())
+    }
 }
 
 impl UdpClient {
@@ -393,7 +410,7 @@ mod tests {
                 for j in 0..18 {
                     let c = match i % 3 {
                         0 => UdpClient::aliyun(),
-                        1 => UdpClient::aliyun2(),
+                        1 => UdpClient::quad9(),
                         2 => UdpClient::google(),
                         _ => UdpClient::aliyun(),
                     };
