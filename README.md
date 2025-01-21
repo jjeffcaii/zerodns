@@ -2,7 +2,7 @@
 
 # ZeroDNS
 
-![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/jjeffcaii/zerodns/rust.yml)
+t![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/jjeffcaii/zerodns/rust.yml)
 [![Codecov](https://img.shields.io/codecov/c/github/jjeffcaii/zerodns)](https://app.codecov.io/gh/jjeffcaii/zerodns)
 [![Crates.io Version](https://img.shields.io/crates/v/zerodns)](https://crates.io/crates/zerodns)
 [![Crates.io Total Downloads](https://img.shields.io/crates/d/zerodns)](https://crates.io/crates/zerodns)
@@ -90,6 +90,10 @@ props = { trusted = ["tcp://208.67.222.222:443", "tcp://208.67.220.220:443"], mi
 kind = "lua"
 props.script = """
 -- The filter entrance:
+
+local resolver = Resolver('223.5.5.5','223.6.6.6')
+
+
 function handle(ctx)
   -- log something...
   for i,v in ipairs(ctx.request:questions()) do
@@ -97,7 +101,7 @@ function handle(ctx)
   end
 
   -- resolve addr from 223.5.5.5
-  local resp = resolve(ctx.request,'223.5.5.5')
+  local resp = resolver:resolve(ctx.request)
 
   -- log something...
   for i,v in ipairs(resp:answers()) do

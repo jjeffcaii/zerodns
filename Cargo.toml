@@ -1,6 +1,6 @@
 [package]
 name = "zerodns"
-version = "0.1.0-alpha.9"
+version = "0.1.0-alpha.10"
 edition = "2021"
 license = "MIT"
 readme = "README.md"
@@ -59,7 +59,7 @@ strum_macros = "0.26"
 deadpool = "0.12"
 socket2 = "0.5"
 mlua = { version = "0.10", features = ["luajit", "vendored", "serialize", "async", "macros", "send", "anyhow"] }
-garde = { version = "0.21", features = ["serde", "derive", "regex"] }
+garde = { version = "0.22", features = ["serde", "derive", "regex"] }
 rustls = "0.23"
 webpki-roots = "0.26"
 tokio-rustls = "0.26"

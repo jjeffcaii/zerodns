@@ -1,11 +1,11 @@
+name: Crates Publish
+
 on:
   push:
     # Pattern matched against refs/tags
     tags:
-      - '*'           # Push events to every tag not containing /
+      - 'v*'           # Push events to every tag not containing /
   workflow_dispatch:
-
-name: Publish
 
 jobs:
   publish:

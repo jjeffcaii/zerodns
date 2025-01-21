@@ -4,7 +4,7 @@ use clap::ArgMatches;
 use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
 use zerodns::client::request;
-use zerodns::protocol::{Class, Flags, Kind, Message, DNS};
+use zerodns::protocol::{AdditionalRR, Class, Flags, Kind, Message, DNS};
 
 pub(crate) async fn execute(sm: &ArgMatches) -> Result<()> {
     // --timeout 5
@@ -62,7 +62,13 @@ pub(crate) async fn execute(sm: &ArgMatches) -> Result<()> {
         timeout = Duration::from_secs(n.parse::<u64>()?);
     }
 
-    let flags = Flags::builder().request().recursive_query(true).build();
+    let noedns = sm.get_one::<bool>("noedns").cloned().unwrap_or(false);
+
+    let flags = Flags::builder()
+        .request()
+        .edns(!noedns)
+        .recursive_query(true)
+        .build();
     let req = {
         let mut bu = Message::builder()
             .id({
@@ -74,6 +80,10 @@ pub(crate) async fn execute(sm: &ArgMatches) -> Result<()> {
 
         for next in types {
             bu = bu.question(&domain, next, class);
+        }
+
+        if !noedns {
+            bu = bu.additional_pseudo(4096, 0, 0, 0, None::<&[u8]>);
         }
 
         bu.build()?
@@ -124,7 +134,22 @@ fn print_resolve_result(
 
     println!();
     println!(";; OPT PSEUDOSECTION:");
-    println!("; EDNS: version: 0, flags:; udp: 512");
+    for next in res
+        .additionals()
+        .filter(|it| matches!(it, AdditionalRR::PseudoRR(_)))
+    {
+        if let AdditionalRR::PseudoRR(pseude) = next {
+            println!(
+                "; EDNS: version: {}, flags: {:#x}; udp: {}",
+                pseude.version(),
+                pseude.extended_rcode(),
+                pseude.udp_payload_size()
+            );
+            // TODO: print pseude data pairs
+        }
+    }
+
+    println!();
     println!(";; QUESTION SECTION:");
     for question in req.questions() {
         println!(
@@ -147,6 +172,24 @@ fn print_resolve_result(
             answer.kind(),
             answer.rdata()?
         );
+    }
+
+    println!();
+    println!(";; ADDITIONAL SECTION:");
+    for next in res
+        .additionals()
+        .filter(|it| matches!(it, AdditionalRR::RR(_)))
+    {
+        if let AdditionalRR::RR(rr) = next {
+            println!(
+                "{}.\t{}\t{}\t{}\t{}",
+                rr.name(),
+                rr.time_to_live(),
+                rr.class(),
+                rr.kind(),
+                rr.rdata()?
+            );
+        }
     }
 
     println!();

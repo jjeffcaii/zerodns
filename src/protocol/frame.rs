@@ -1,14 +1,14 @@
-use std::borrow::Cow;
-use std::fmt::{Debug, Display, Formatter};
-use std::net::{Ipv4Addr, Ipv6Addr};
-
+use crate::cachestr::Cachestr;
 use crate::misc::is_valid_domain;
 use byteorder::{BigEndian, ByteOrder};
 use bytes::{BufMut, Bytes, BytesMut};
-use clap::builder::PossibleValue;
-use clap::ValueEnum;
+use clap::{builder::PossibleValue, ValueEnum};
 use hashbrown::HashMap;
 use once_cell::sync::Lazy;
+use std::borrow::Cow;
+use std::fmt::{Debug, Display, Formatter};
+use std::net::{Ipv4Addr, Ipv6Addr};
+use std::str::FromStr;
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 
@@ -52,6 +52,27 @@ pub enum RCode {
     NXRRSet = 8,
     NotAuth = 9,
     NotZone = 10,
+}
+
+impl FromStr for RCode {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "NOERROR" => Ok(RCode::NoError),
+            "FORMATERROR" => Ok(RCode::FormatError),
+            "SERVERFAILURE" => Ok(RCode::ServerFailure),
+            "NAMEERROR" => Ok(RCode::NameError),
+            "NOTIMPLEMENTED" => Ok(RCode::NotImplemented),
+            "REFUSED" => Ok(RCode::Refused),
+            "YXDOMAIN" => Ok(RCode::YXDomain),
+            "YXRRSET" => Ok(RCode::YXRRSet),
+            "NXRRSET" => Ok(RCode::NXRRSet),
+            "NOTAUTH" => Ok(RCode::NotAuth),
+            "NOTZONE" => Ok(RCode::NotZone),
+            other => bail!("invalid rcode '{}'", other),
+        }
+    }
 }
 
 impl Display for RCode {
@@ -352,6 +373,25 @@ impl Display for Kind {
     }
 }
 
+static KINDS: Lazy<HashMap<String, Kind>> = Lazy::new(|| {
+    let mut m = HashMap::<String, Kind>::new();
+    Kind::iter().for_each(|k| {
+        m.insert(k.to_string(), k);
+    });
+    m
+});
+
+impl FromStr for Kind {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        KINDS
+            .get(s)
+            .cloned()
+            .ok_or_else(|| anyhow!("invalid message type '{}'", s))
+    }
+}
+
 #[derive(Debug, Copy, Clone, PartialEq, Eq, EnumIter, Hash)]
 pub enum Class {
     /// the Internet
@@ -386,6 +426,20 @@ impl Display for Class {
             Class::CS => f.write_str("CS"),
             Class::CH => f.write_str("CH"),
             Class::HS => f.write_str("HS"),
+        }
+    }
+}
+
+impl FromStr for Class {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "IN" => Ok(Class::IN),
+            "CS" => Ok(Class::CS),
+            "CH" => Ok(Class::CH),
+            "HS" => Ok(Class::HS),
+            other => bail!("invalid message class '{}'", other),
         }
     }
 }
@@ -458,6 +512,16 @@ impl FlagsBuilder {
         self
     }
 
+    pub fn edns(mut self, enabled: bool) -> Self {
+        const MASK: u16 = 1 << 5;
+        if enabled {
+            self.0 |= MASK;
+        } else {
+            self.0 &= !MASK;
+        }
+        self
+    }
+
     pub fn recursive_query(mut self, enabled: bool) -> Self {
         const MASK: u16 = 1 << 8;
         if enabled {
@@ -485,7 +549,7 @@ impl FlagsBuilder {
 
 /// DNS Message Flags:
 ///  - http://www.tcpipguide.com/free/t_DNSMessageHeaderandQuestionSectionFormat.htm
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Copy, Clone, PartialEq, Eq)]
 pub struct Flags(u16);
 
 impl Flags {
@@ -496,7 +560,9 @@ impl Flags {
     pub fn builder() -> FlagsBuilder {
         FlagsBuilder(0)
     }
+}
 
+impl Flags {
     pub fn is_response(&self) -> bool {
         self.0 & 0x8000 != 0
     }
@@ -542,6 +608,10 @@ impl Flags {
             _ => unreachable!(),
         }
     }
+
+    pub fn as_u16(self) -> u16 {
+        self.0
+    }
 }
 
 struct Authority<'a> {
@@ -557,7 +627,7 @@ struct Authority<'a> {
     minimum_ttl: u32,
 }
 
-struct Answer<'a> {
+struct RRBuilder<'a> {
     name: Cow<'a, str>,
     kind: Kind,
     class: Class,
@@ -565,7 +635,18 @@ struct Answer<'a> {
     data: Cow<'a, [u8]>,
 }
 
-struct Additional {}
+struct PseudoRRBuilder<'a> {
+    udp_payload_size: u16,
+    extended_rcode: u8,
+    version: u8,
+    z: u16,
+    data: Option<Cow<'a, [u8]>>,
+}
+
+enum AdditionalBuilder<'a> {
+    RR(RRBuilder<'a>),
+    PseudoRR(PseudoRRBuilder<'a>),
+}
 
 struct Query<'a> {
     name: Cow<'a, str>,
@@ -578,9 +659,9 @@ pub struct MessageBuilder<'a> {
     id: u16,
     flags: Flags,
     queries: Vec<Query<'a>>,
-    answers: Vec<Answer<'a>>,
+    answers: Vec<RRBuilder<'a>>,
     authorities: Vec<Authority<'a>>,
-    additionals: Vec<Additional>,
+    additionals: Vec<AdditionalBuilder<'a>>,
 }
 
 impl<'a> MessageBuilder<'a> {
@@ -616,13 +697,52 @@ impl<'a> MessageBuilder<'a> {
         N: Into<Cow<'a, str>>,
         D: Into<Cow<'a, [u8]>>,
     {
-        self.answers.push(Answer {
+        self.answers.push(RRBuilder {
             name: name.into(),
             kind,
             class,
             ttl,
             data: data.into(),
         });
+        self
+    }
+
+    pub fn additional<N, D>(mut self, name: N, kind: Kind, class: Class, ttl: u32, data: D) -> Self
+    where
+        N: Into<Cow<'a, str>>,
+        D: Into<Cow<'a, [u8]>>,
+    {
+        let rr = RRBuilder {
+            name: name.into(),
+            kind,
+            class,
+            ttl,
+            data: data.into(),
+        };
+
+        self.additionals.push(AdditionalBuilder::RR(rr));
+        self
+    }
+
+    pub fn additional_pseudo<D>(
+        mut self,
+        udp_payload_size: u16,
+        extended_rcode: u8,
+        version: u8,
+        z: u8,
+        data: Option<D>,
+    ) -> Self
+    where
+        D: Into<Cow<'a, [u8]>>,
+    {
+        let rr = PseudoRRBuilder {
+            udp_payload_size,
+            extended_rcode,
+            version: 0,
+            z: 0,
+            data: data.map(|it| it.into()),
+        };
+        self.additionals.push(AdditionalBuilder::PseudoRR(rr));
         self
     }
 
@@ -702,6 +822,56 @@ impl<'a> MessageBuilder<'a> {
 
         for next in additionals {
             // TODO: write additional
+            match next {
+                AdditionalBuilder::RR(next) => {
+                    let name = next.name;
+                    if next.kind != Kind::NS && !is_valid_domain(&name) {
+                        bail!("invalid answer name '{}'", &name);
+                    }
+                    // name
+                    {
+                        for label in name
+                            .split('.')
+                            .filter(|it| !it.is_empty())
+                            .map(|it| it.as_bytes())
+                        {
+                            b.put_u8(label.len() as u8);
+                            b.put_slice(label);
+                        }
+                        b.put_u8(0);
+                    }
+
+                    // type
+                    b.put_u16(next.kind as u16);
+
+                    // class
+                    b.put_u16(next.class as u16);
+
+                    // ttl
+                    b.put_u32(next.ttl);
+
+                    // rdata
+                    b.put_u16(next.data.len() as u16);
+                    b.put_slice(&next.data);
+                }
+                AdditionalBuilder::PseudoRR(next) => {
+                    // empty name
+                    b.put_u8(0);
+                    b.put_u16(Kind::OPT as u16);
+                    b.put_u16(next.udp_payload_size);
+                    b.put_u8(next.extended_rcode);
+                    b.put_u8(next.version);
+                    b.put_u16(next.z);
+
+                    match next.data {
+                        None => b.put_u16(0),
+                        Some(data) => {
+                            b.put_u16(data.len() as u16);
+                            b.put_slice(&data);
+                        }
+                    }
+                }
+            }
         }
 
         Ok(Message(b))
@@ -792,6 +962,25 @@ impl Message {
 
     pub fn additional_count(&self) -> u16 {
         BigEndian::read_u16(&self.0[10..])
+    }
+
+    pub fn additionals(&self) -> impl Iterator<Item = AdditionalRR<'_>> {
+        let mut offset = 12;
+        for next in self.questions() {
+            offset += next.len();
+        }
+        for next in self.answers() {
+            offset += next.len();
+        }
+        for next in self.authorities() {
+            offset += next.len();
+        }
+
+        AdditionalRRIter {
+            raw: &self.0[..],
+            offset,
+            lefts: self.additional_count(),
+        }
     }
 }
 
@@ -893,6 +1082,45 @@ impl Display for Question<'_> {
     }
 }
 
+struct AdditionalRRIter<'a> {
+    raw: &'a [u8],
+    offset: usize,
+    lefts: u16,
+}
+
+impl<'a> Iterator for AdditionalRRIter<'a> {
+    type Item = AdditionalRR<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.lefts < 1 {
+            return None;
+        }
+        self.lefts -= 1;
+
+        let next = RR {
+            raw: self.raw,
+            offset: self.offset,
+        };
+
+        match next.kind() {
+            Kind::OPT => {
+                let next = PseudoRR {
+                    raw: self.raw,
+                    offset: self.offset,
+                };
+                let size = next.len();
+                self.offset += size;
+                Some(AdditionalRR::PseudoRR(next))
+            }
+            _ => {
+                let size = next.len();
+                self.offset += size;
+                Some(AdditionalRR::RR(next))
+            }
+        }
+    }
+}
+
 struct RRIter<'a> {
     raw: &'a [u8],
     offset: usize,
@@ -917,6 +1145,101 @@ impl<'a> Iterator for RRIter<'a> {
         self.offset += size;
 
         Some(next)
+    }
+}
+
+pub enum AdditionalRR<'a> {
+    PseudoRR(PseudoRR<'a>),
+    RR(RR<'a>),
+}
+
+pub struct PseudoRR<'a> {
+    raw: &'a [u8],
+    offset: usize,
+}
+
+impl PseudoRR<'_> {
+    pub fn name(&self) -> Notation<'_> {
+        Notation::new(self.raw, self.offset)
+    }
+
+    pub fn kind(&self) -> Kind {
+        let offset = self.offset + self.name().len();
+        let code = BigEndian::read_u16(&self.raw[offset..]);
+        Kind::try_from(code).expect("Invalid RR type!")
+    }
+
+    pub fn udp_payload_size(&self) -> u16 {
+        let offset = self.offset + self.name().len() + 2;
+        BigEndian::read_u16(&self.raw[offset..])
+    }
+
+    pub fn extended_rcode(&self) -> u8 {
+        let offset = self.offset + self.name().len() + 4;
+        self.raw[offset]
+    }
+
+    pub fn version(&self) -> u8 {
+        let offset = self.offset + self.name().len() + 5;
+        self.raw[offset]
+    }
+
+    pub fn z(&self) -> u16 {
+        let offset = self.offset + self.name().len() + 6;
+        BigEndian::read_u16(&self.raw[offset..])
+    }
+
+    pub fn data_len(&self) -> usize {
+        let offset = self.offset + self.name().len() + 8;
+        BigEndian::read_u16(&self.raw[offset..]) as usize
+    }
+
+    pub fn data(&self) -> Option<&'_ [u8]> {
+        let offset = self.offset + self.name().len() + 10;
+        let size = self.data_len();
+        if size == 0 {
+            None
+        } else {
+            Some(&self.raw[offset..offset + size])
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.name().len() + 10 + self.data_len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+impl Display for PseudoRR<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        /*
+                write!(f, "name={}", self.name())?;
+        write!(f, "\tkind={}", self.kind())?;
+        write!(f, "\tclass={}", self.class())?;
+        write!(f, "\ttime_to_live={}", self.time_to_live())?;
+        match self.rdata() {
+            Ok(rdata) => write!(f, "\trdata={}", rdata)?,
+            Err(_) => write!(f, "\trdata=n/a")?,
+        }
+        Ok(())
+         */
+
+        write!(f, "name={}", self.name())?;
+        write!(f, "\tkind={}", self.kind())?;
+        write!(f, "\tudp_payload_size={}", self.udp_payload_size())?;
+        write!(f, "\textended_rcode={}", self.extended_rcode())?;
+        write!(f, "\tversion={}", self.version())?;
+        write!(f, "\tz={:#x}", self.z())?;
+        write!(f, "\tdata_len={}", self.data_len())?;
+
+        if let Some(data) = self.data() {
+            write!(f, "\tdata={:?}", data)?;
+        }
+
+        Ok(())
     }
 }
 
@@ -1011,6 +1334,10 @@ impl RR<'_> {
                 offset,
                 size,
             }),
+            Kind::TXT => {
+                let cs = read_character_string(&self.raw[offset..offset + size]);
+                RData::TXT(CharacterString(cs))
+            }
             _ => RData::UNKNOWN(&self.raw[offset..offset + size]),
         })
     }
@@ -1029,6 +1356,12 @@ impl RR<'_> {
         let size = BigEndian::read_u16(&self.raw[self.offset + n + 8..]) as usize;
         n + 10 + size
     }
+}
+
+#[inline]
+fn read_character_string(b: &[u8]) -> &[u8] {
+    let n = b[0] as usize;
+    &b[1..n]
 }
 
 impl Display for RR<'_> {
@@ -1149,6 +1482,36 @@ impl<'a> Iterator for Notation<'a> {
 
 #[allow(clippy::upper_case_acronyms)]
 #[derive(Debug)]
+pub enum RDataOwned {
+    A(Ipv4Addr),
+    AAAA(Ipv6Addr),
+    CNAME(Cachestr),
+    MX {
+        preference: u16,
+        mail_exchange: Cachestr,
+    },
+    SOA {
+        primary_nameserver: Cachestr,
+        responsible_authority_mailbox: Cachestr,
+        serial_number: u32,
+        refresh_interval: u32,
+        retry_interval: u32,
+        expire_limit: u32,
+        minimum_ttl: u32,
+    },
+    PTR(Cachestr),
+    NS(Cachestr),
+    HTTPS {
+        priority: u16,
+        target_name: Cachestr,
+        params: Vec<(SvcParamKey, Vec<u8>)>,
+    },
+    TXT(Cachestr),
+    UNKNOWN(Vec<u8>),
+}
+
+#[allow(clippy::upper_case_acronyms)]
+#[derive(Debug)]
 pub enum RData<'a> {
     A(A<'a>),
     AAAA(AAAA<'a>),
@@ -1158,6 +1521,7 @@ pub enum RData<'a> {
     PTR(PTR<'a>),
     NS(NS<'a>),
     HTTPS(HTTPS<'a>),
+    TXT(CharacterString<'a>),
     UNKNOWN(&'a [u8]),
 }
 
@@ -1172,6 +1536,7 @@ impl Display for RData<'_> {
             RData::AAAA(it) => write!(f, "{}", it),
             RData::NS(it) => write!(f, "{}", it),
             RData::HTTPS(it) => write!(f, "{}", it),
+            RData::TXT(it) => write!(f, "{}", it),
             RData::UNKNOWN(it) => write!(f, "UNKNOWN({:?})", it),
         }
     }
@@ -1212,6 +1577,64 @@ impl HTTPS<'_> {
 
     pub fn params(&self) -> impl Iterator<Item = HttpsSvcParam<'_>> {
         HttpsSvcParamIter(&self.raw[self.offset + 2 + self.target_name().len()..])
+    }
+}
+
+impl Display for HTTPS<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}\t{}.\t", self.priority(), self.target_name())?;
+
+        for (i, next) in self.params().enumerate() {
+            if i != 0 {
+                write!(f, " ")?;
+            }
+
+            write!(f, "{}=", next.key())?;
+
+            // write values
+            for (j, val) in next.values().enumerate() {
+                if j != 0 {
+                    write!(f, ",")?;
+                }
+                write!(f, "{}", unsafe { std::str::from_utf8_unchecked(val) })?;
+            }
+        }
+        Ok(())
+    }
+}
+
+#[allow(clippy::upper_case_acronyms)]
+#[derive(Debug)]
+pub struct CharacterString<'a>(&'a [u8]);
+
+impl CharacterString<'_> {
+    pub fn as_str(&self) -> &str {
+        unsafe { std::str::from_utf8_unchecked(self.0) }
+    }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        self.0
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+impl AsRef<str> for CharacterString<'_> {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl Display for CharacterString<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())?;
+        Ok(())
     }
 }
 
@@ -1270,29 +1693,6 @@ impl From<u16> for SvcParamKey {
             65535 => Self::RESERVED,
             other => Self::PRIVATE(other),
         }
-    }
-}
-
-impl Display for HTTPS<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}\t{}.\t", self.priority(), self.target_name())?;
-
-        for (i, next) in self.params().enumerate() {
-            if i != 0 {
-                write!(f, " ")?;
-            }
-
-            write!(f, "{}=", next.key())?;
-
-            // write values
-            for (j, val) in next.values().enumerate() {
-                if j != 0 {
-                    write!(f, ",")?;
-                }
-                write!(f, "{}", unsafe { std::str::from_utf8_unchecked(val) })?;
-            }
-        }
-        Ok(())
     }
 }
 
@@ -1919,5 +2319,44 @@ mod tests {
                 rdata
             );
         }
+    }
+
+    #[test]
+    fn test_edns() {
+        init();
+
+        let msg = {
+            let s= "27c581800001000d0000000e0000020001c00c000200010007d2e00014016b0c726f6f742d73657276657273036e657400c00c000200010007d2e00004016cc01fc00c000200010007d2e00004016dc01fc00c000200010007d2e000040161c01fc00c000200010007d2e000040162c01fc00c000200010007d2e000040163c01fc00c000200010007d2e000040164c01fc00c000200010007d2e000040165c01fc00c000200010007d2e000040166c01fc00c000200010007d2e000040167c01fc00c000200010007d2e000040168c01fc00c000200010007d2e000040169c01fc00c000200010007d2e00004016ac01fc01d000100010000055c0004c1000e81c03d000100010000055c0004c707532ac04d000100010000055c0004ca0c1b21c05d000100010000055c0004c6290004c06d000100010000055c0004aaf7aa02c07d000100010000055c0004c021040cc08d000100010000055c0004c7075b0dc09d000100010000055c0004c0cbe60ac0ad000100010000055c0004c00505f1c0bd000100010000055c0004c0702404c0cd000100010000055c0004c661be35c0dd000100010000055c0004c0249411c0ed000100010000055c0004c03a801e0000290fa0000000000000";
+            let raw = hex::decode(s).unwrap();
+            Message::from(raw)
+        };
+
+        assert_eq!(14, msg.additional_count());
+
+        let mut cnt = (0, 0);
+
+        for (i, next) in msg.additionals().enumerate() {
+            match next {
+                AdditionalRR::PseudoRR(rr) => {
+                    info!("#{:02} -> {}", i, rr);
+                    assert_eq!(Kind::OPT, rr.kind());
+                    assert_eq!(0, rr.version());
+                    assert_eq!(0, rr.extended_rcode());
+                    assert_eq!(4000, rr.udp_payload_size());
+                    assert_eq!(0, rr.z());
+                    assert_eq!(0, rr.data_len());
+                    assert!(rr.data().is_none());
+
+                    cnt.1 += 1;
+                }
+                AdditionalRR::RR(rr) => {
+                    info!("#{:02} -> {}", i, rr);
+                    cnt.0 += 1;
+                }
+            }
+        }
+
+        assert_eq!(13, cnt.0, "the num of rr should be 13");
+        assert_eq!(1, cnt.1, "the num of pseude-rr should be 11");
     }
 }

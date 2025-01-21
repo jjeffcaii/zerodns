@@ -28,17 +28,11 @@ pub async fn run(c: Config, closer: Arc<Notify>) -> anyhow::Result<()> {
         rb.build()
     };
 
-    let cs = match &c.server.cache_size {
-        None => None,
-        Some(size) => {
-            if *size == 0 {
-                None
-            } else {
-                Some(Arc::new(
-                    MemoryLoadingCache::builder().capacity(*size).build(),
-                ))
-            }
-        }
+    let cs = match &c.global.cache_size {
+        Some(size) if *size > 0 => Some(Arc::new(
+            MemoryLoadingCache::builder().capacity(*size).build(),
+        )),
+        _ => None,
     };
 
     let udp_server = {

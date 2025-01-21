@@ -31,6 +31,7 @@ async fn main() -> anyhow::Result<()> {
                 )
                 .arg(arg!(--timeout <TIMEOUT> "timeout seconds for the DNS request"))
                 .arg(arg!(--short "display nothing except short form of answer"))
+                .arg(arg!(--noedns "disable EDNS"))
                 .arg(arg!([DOMAIN] "the domain to be resolved")),
         )
         .get_matches();

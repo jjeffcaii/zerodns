@@ -3,6 +3,7 @@ use clap::ArgMatches;
 use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::Notify;
 use zerodns::client::SystemClient;
 
@@ -73,7 +74,15 @@ pub(crate) async fn execute(sm: &ArgMatches) -> Result<()> {
 
     closer.notify_waiters();
 
-    stopped.notified().await;
+    const SHUTDOWN_TIMEOUT: u64 = 15;
+    if let Err(_e) =
+        tokio::time::timeout(Duration::from_secs(SHUTDOWN_TIMEOUT), stopped.notified()).await
+    {
+        warn!(
+            "force stop process because graceful shutdown is timeout after {}s",
+            SHUTDOWN_TIMEOUT
+        );
+    }
 
     Ok(())
 }

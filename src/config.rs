@@ -27,12 +27,12 @@ pub struct GlobalConfig {
     pub nameservers: Vec<String>,
     pub resolv_file: Option<String>,
     pub hosts_file: Option<String>,
+    pub cache_size: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServerConfig {
     pub listen: String,
-    pub cache_size: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
