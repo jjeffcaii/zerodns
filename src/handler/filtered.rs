@@ -123,6 +123,7 @@ mod tests {
             .unwrap();
 
         let mut ctx = Context::default();
+
         let res = h.handle(&mut ctx, &mut req).await;
         assert!(res.is_ok_and(|it| it.is_none()));
     }

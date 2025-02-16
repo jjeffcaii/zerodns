@@ -1,5 +1,6 @@
 use crate::protocol::Message;
 use crate::Result;
+use std::net::SocketAddr;
 
 #[derive(Debug, Copy, Clone, Default, Hash, PartialEq, Eq)]
 pub struct ContextFlags(u64);
@@ -13,6 +14,13 @@ bitflags! {
 #[derive(Debug, Default)]
 pub struct Context {
     pub flags: ContextFlags,
+    pub(crate) peer: Option<SocketAddr>,
+}
+
+impl Context {
+    pub fn client_addr(&self) -> SocketAddr {
+        self.peer.unwrap()
+    }
 }
 
 #[async_trait::async_trait]

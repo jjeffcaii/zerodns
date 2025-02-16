@@ -41,7 +41,7 @@ where
         h: Arc<H>,
         cache: Option<Arc<C>>,
     ) {
-        let (res, cached) = helper::handle(req, h, cache).await;
+        let (res, cached) = helper::handle(peer, req, h, cache).await;
 
         if res.answer_count() > 0 {
             for next in res.answers() {

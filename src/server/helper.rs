@@ -4,6 +4,7 @@ use crate::filter::Context;
 use crate::handler::Handler;
 use crate::protocol::{Flags, Message, RCode};
 use crate::{Error as ZError, Result};
+use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -85,18 +86,25 @@ fn convert_error_to_message(
 }
 
 #[inline]
-async fn handle_<H>(req: &Message, h: Arc<H>) -> Result<Message>
+async fn handle_<H>(peer: SocketAddr, req: &Message, h: Arc<H>) -> Result<Message>
 where
     H: Handler,
 {
     let mut req = Clone::clone(req);
     let mut ctx = Context::default();
+    ctx.peer.replace(peer);
+
     h.handle(&mut ctx, &mut req)
         .await?
         .ok_or_else(|| anyhow!(ZError::ResolveNothing))
 }
 
-pub(super) async fn handle<H, C>(req: Message, h: Arc<H>, cache: Option<Arc<C>>) -> (Message, bool)
+pub(super) async fn handle<H, C>(
+    peer: SocketAddr,
+    req: Message,
+    h: Arc<H>,
+    cache: Option<Arc<C>>,
+) -> (Message, bool)
 where
     H: Handler,
     C: LoadingCache,
@@ -106,7 +114,7 @@ where
     }
 
     let (res, cached) = match cache.as_deref() {
-        None => (handle_(&req, h).await, false),
+        None => (handle_(peer, &req, h).await, false),
         Some(lc) => {
             let cached = Arc::new(AtomicBool::new(true));
 
@@ -115,7 +123,7 @@ where
                 let cached = Clone::clone(&cached);
                 lc.try_get_with_fixed(req, move |req| {
                     cached.store(false, Ordering::SeqCst);
-                    async move { handle_(&req, h).await }
+                    async move { handle_(peer, &req, h).await }
                 })
                 .await
             };

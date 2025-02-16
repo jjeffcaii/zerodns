@@ -72,9 +72,8 @@ pub(crate) async fn execute(sm: &ArgMatches) -> Result<()> {
     let req = {
         let mut bu = Message::builder()
             .id({
-                use rand::Rng;
-                let mut rng = rand::thread_rng();
-                rng.gen_range(1024..u16::MAX)
+                use rand::prelude::*;
+                rand::rng().random_range(1024..u16::MAX)
             })
             .flags(flags);
 

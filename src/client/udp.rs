@@ -1,7 +1,6 @@
 use futures::StreamExt;
 use hashbrown::HashMap;
 use once_cell::sync::Lazy;
-use rand::{thread_rng, Rng};
 use socket2::{Domain, Protocol, Type};
 use std::fmt::{Display, Formatter};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
@@ -202,8 +201,8 @@ impl MultiplexUdpClient {
         });
 
         let seq = {
-            let mut rng = thread_rng();
-            rng.gen_range(1..u16::MAX)
+            use rand::prelude::*;
+            rand::rng().random_range(1..u16::MAX)
         };
 
         Self {

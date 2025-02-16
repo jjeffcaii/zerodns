@@ -6,6 +6,7 @@ use crate::{Error, Result};
 use hashbrown::HashMap;
 use moka::future::Cache;
 use once_cell::sync::Lazy;
+use rand::Rng;
 use smallvec::SmallVec;
 use std::net::Ipv4Addr;
 use std::time::Duration;
@@ -70,12 +71,7 @@ impl LookupCache {
             .opcode(OpCode::StandardQuery)
             .build();
 
-        let id = {
-            use rand::prelude::*;
-
-            let mut rng = thread_rng();
-            rng.gen_range(1..u16::MAX)
-        };
+        let id = rand::rng().random_range(1..u16::MAX);
 
         let req0 = Message::builder()
             .id(id)

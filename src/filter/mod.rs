@@ -20,3 +20,4 @@ mod noop;
 mod proto;
 mod proxyby;
 mod registry;
+mod wasm;

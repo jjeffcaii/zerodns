@@ -323,9 +323,14 @@ struct LuaContext(*mut Context, *mut Message, *mut Option<Message>);
 
 impl UserData for LuaContext {
     fn add_fields<F: LuaUserDataFields<Self>>(fields: &mut F) {
-        fields.add_field_method_get("request", |lua, this| {
+        fields.add_field_method_get("request", |_lua, this| {
             let msg = LuaMessage(Clone::clone(unsafe { this.1.as_ref().unwrap() }));
             Ok(msg)
+        });
+
+        fields.add_field_method_get("peer", |_lua, this| {
+            let ctx = unsafe { this.0.as_ref().unwrap() };
+            Ok(ctx.client_addr().to_string())
         });
     }
 

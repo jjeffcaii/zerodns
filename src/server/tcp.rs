@@ -90,7 +90,7 @@ where
             let req = next?;
             let handler = Clone::clone(&handler);
             let cache = Clone::clone(&cache);
-            let (res, cached) = super::helper::handle(req, handler, cache).await;
+            let (res, cached) = super::helper::handle(addr, req, handler, cache).await;
 
             if res.answer_count() > 0 {
                 for next in res.answers() {
