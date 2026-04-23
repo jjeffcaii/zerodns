@@ -1,6 +1,6 @@
 use super::{Client, TcpClient, UdpClient};
-use crate::protocol::Message;
 use crate::Result;
+use crate::protocol::Message;
 use resolv_conf::{Config, ScopedIp};
 use std::fmt::{Display, Formatter};
 use std::net::{IpAddr, SocketAddr};
@@ -164,7 +164,7 @@ mod tests {
         pretty_env_logger::try_init().ok();
     }
 
-    #[tokio::test]
+    #[tokio_shared_rt::test(shared)]
     async fn test_default_client() -> anyhow::Result<()> {
         init();
 

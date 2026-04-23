@@ -19,21 +19,16 @@ pub enum Overflow {
     Block,
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize, Hash)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize, Hash, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum Level {
     Off,
     Trace,
     Debug,
+    #[default]
     Info,
     Warn,
     Error,
-}
-
-impl Default for Level {
-    fn default() -> Self {
-        Self::Info
-    }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize, Hash, Validate)]

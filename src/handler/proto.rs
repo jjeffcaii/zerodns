@@ -1,6 +1,6 @@
+use crate::Result;
 use crate::filter::Context;
 use crate::protocol::Message;
-use crate::Result;
 use async_trait::async_trait;
 
 #[async_trait]

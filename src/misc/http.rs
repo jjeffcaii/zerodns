@@ -1,7 +1,7 @@
 use crate::error::Error::NetworkFailure;
 use bytes::{Buf, Bytes, BytesMut};
 use http::Response;
-use smallvec::{smallvec, SmallVec};
+use smallvec::{SmallVec, smallvec};
 use std::io;
 use tokio_util::codec::Decoder;
 

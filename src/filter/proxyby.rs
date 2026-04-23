@@ -3,11 +3,11 @@ use async_trait::async_trait;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::filter::misc::OptionsReader;
-use crate::protocol::{Message, DNS};
 use crate::Result;
+use crate::filter::misc::OptionsReader;
+use crate::protocol::{DNS, Message};
 
-use super::{handle_next, Context, Filter, FilterFactory, Options};
+use super::{Context, Filter, FilterFactory, Options, handle_next};
 
 #[derive(Default)]
 pub(crate) struct ProxyByFilter {
@@ -92,7 +92,7 @@ mod tests {
         pretty_env_logger::try_init_timed().ok();
     }
 
-    #[tokio::test]
+    #[tokio_shared_rt::test(shared)]
     async fn test_proxyby_filter() {
         init();
 

@@ -30,15 +30,19 @@ props.hosts = { "127.0.0.1" = "localhost", "::1" = "localhost", "1.1.1.1" = "one
 [filters.lua]
 kind = "lua"
 props.script = """
+
+local resolver = Resolver('223.5.5.5', '223.6.6.6')
+
 -- The filter entrance:
 function handle(ctx)
   -- log something...
+  local in_china = false
   for i,v in ipairs(ctx.request:questions()) do
     logger:info('---- question#'..i..': '..v.name)
   end
 
-  -- resolve addr from 223.5.5.5
-  local resp = resolve(ctx.request,'223.5.5.5')
+  -- resolve addr from your resolver
+  local resp = resolver:resolve(ctx.request)
 
   -- log something...
   for i,v in ipairs(resp:answers()) do
@@ -54,4 +58,4 @@ end
 
 [[rules]]
 domain = "*"
-filters = ["alidns"]
+filters = ["lua"]

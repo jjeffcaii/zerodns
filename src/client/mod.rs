@@ -1,5 +1,5 @@
-use crate::protocol::*;
 use crate::Result;
+use crate::protocol::*;
 use arc_swap::ArcSwap;
 pub use doh::DoHClient;
 pub use dot::DoTClient;
@@ -99,7 +99,7 @@ mod tests {
         pretty_env_logger::try_init_timed().ok();
     }
 
-    #[tokio::test]
+    #[tokio_shared_rt::test(shared)]
     async fn test_request() -> anyhow::Result<()> {
         init();
 
@@ -107,15 +107,15 @@ mod tests {
             let flags = Flags::builder().recursive_query(true).build();
             Message::builder()
                 .flags(flags)
-                .question("baidu.com", Kind::A, Class::IN)
+                .question("www.google.com", Kind::A, Class::IN)
                 .build()?
         };
 
         for next in [
-            "223.5.5.5",
-            "tcp://223.5.5.5",
-            "dot://dot.pub",
-            "https://1.1.1.1",
+            "8.8.8.8",
+            "tcp://8.8.8.8",
+            "dot://dns.google",
+            "https://dns.google",
         ] {
             let dns = DNS::from_str(next)?;
             let res = request(&dns, &req, Duration::from_secs(3)).await;

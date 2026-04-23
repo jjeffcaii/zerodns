@@ -10,10 +10,10 @@ use smallvec::SmallVec;
 use config::{Filter as FilterConf, Rule as RuleConf};
 
 use super::{FilteredHandler, Handler};
-use crate::filter::{load as load_filter, Context, Filter, FilterFactoryExt};
+use crate::filter::{Context, Filter, FilterFactoryExt, load as load_filter};
 use crate::handler::filtered::FilteredHandlerBuilder;
 use crate::protocol::Message;
-use crate::{config, Result};
+use crate::{Result, config};
 
 struct FilterFacade {
     inner: Box<dyn Filter>,
@@ -204,7 +204,7 @@ mod tests {
         crate::builtin::setup();
     }
 
-    #[tokio::test]
+    #[tokio_shared_rt::test(shared)]
     async fn test_ruled() -> anyhow::Result<()> {
         init();
 

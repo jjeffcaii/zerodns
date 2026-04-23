@@ -4,7 +4,7 @@ use clap::ArgMatches;
 use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
 use zerodns::client::request;
-use zerodns::protocol::{AdditionalRR, Class, Flags, Kind, Message, DNS};
+use zerodns::protocol::{AdditionalRR, Class, DNS, Flags, Kind, Message};
 
 pub(crate) async fn execute(sm: &ArgMatches) -> Result<()> {
     // --timeout 5

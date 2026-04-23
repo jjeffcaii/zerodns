@@ -6,10 +6,10 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Notify;
 use tokio_util::codec::{FramedRead, FramedWrite};
 
+use crate::Result;
 use crate::cache::LoadingCache;
 use crate::handler::Handler;
 use crate::protocol::Codec;
-use crate::Result;
 
 pub struct TcpServer<H, C> {
     h: H,
@@ -133,7 +133,7 @@ mod tests {
     use crate::cache::MemoryLoadingCache;
     use crate::client::request;
     use crate::filter::Context;
-    use crate::protocol::{Message, DNS};
+    use crate::protocol::{DNS, Message};
     use std::str::FromStr;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::Duration;
@@ -156,7 +156,7 @@ mod tests {
         pretty_env_logger::try_init_timed().ok();
     }
 
-    #[tokio::test]
+    #[tokio_shared_rt::test(shared)]
     async fn test_tcp_listen() -> anyhow::Result<()> {
         init();
 
@@ -195,14 +195,18 @@ mod tests {
         let dns = DNS::from_str(&format!("tcp://127.0.0.1:{}", port))?;
 
         // no cache
-        assert!(request(&dns, &req, Duration::from_secs(3))
-            .await
-            .is_ok_and(|msg| &msg == &res));
+        assert!(
+            request(&dns, &req, Duration::from_secs(3))
+                .await
+                .is_ok_and(|msg| msg == res)
+        );
 
         // use cache
-        assert!(request(&dns, &req, Duration::from_secs(3))
-            .await
-            .is_ok_and(|msg| &msg == &res));
+        assert!(
+            request(&dns, &req, Duration::from_secs(3))
+                .await
+                .is_ok_and(|msg| msg == res)
+        );
 
         assert_eq!(
             1,

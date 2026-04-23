@@ -1,7 +1,7 @@
+use crate::Result;
 use crate::filter::{Context, Filter};
 use crate::handler::Handler;
 use crate::protocol::Message;
-use crate::Result;
 use async_trait::async_trait;
 use std::collections::VecDeque;
 
@@ -103,7 +103,7 @@ mod tests {
         pretty_env_logger::try_init_timed().ok();
     }
 
-    #[tokio::test]
+    #[tokio_shared_rt::test(shared)]
     async fn test_filtered_handler() {
         init();
 

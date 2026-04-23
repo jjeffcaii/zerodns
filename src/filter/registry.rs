@@ -4,8 +4,8 @@ use std::sync::Arc;
 use once_cell::sync::Lazy;
 use parking_lot::RwLock;
 
-use crate::filter::Filter;
 use crate::Result;
+use crate::filter::Filter;
 
 pub type Options = HashMap<String, toml::Value>;
 
@@ -33,7 +33,7 @@ where
     }
 }
 
-pub fn register<S, G, F, T>(name: S, gen: G)
+pub fn register<S, G, F, T>(name: S, generator: G)
 where
     S: Into<String>,
     G: 'static + Sync + Send + Fn(&Options) -> Result<F>,
@@ -44,7 +44,7 @@ where
 
     // wrap into generator function
     let wrapper = move |opts: &Options| -> Result<Box<dyn FilterFactoryExt>> {
-        let f = gen(opts)?;
+        let f = generator(opts)?;
         // convert to boxed trait
         let f: Box<dyn FilterFactoryExt> = Box::new(f);
         Ok(f)

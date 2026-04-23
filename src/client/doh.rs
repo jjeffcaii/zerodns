@@ -1,14 +1,14 @@
 use super::Client;
-use crate::misc::http::{SimpleHttp1Codec, CRLF};
-use crate::protocol::{Message, DEFAULT_HTTP_PORT, DEFAULT_TLS_PORT};
+use crate::misc::http::{CRLF, SimpleHttp1Codec};
+use crate::protocol::{DEFAULT_HTTP_PORT, DEFAULT_TLS_PORT, Message};
 use futures::StreamExt;
 use once_cell::sync::Lazy;
-use smallvec::{smallvec, SmallVec};
+use smallvec::{SmallVec, smallvec};
 use std::fmt::{Display, Formatter};
 use std::io::{self, Write};
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
@@ -111,8 +111,12 @@ impl DoHClient {
     pub fn cloudflare() -> Self {
         static CLIENTS: Lazy<[DoHClient; 2]> = Lazy::new(|| {
             [
-                DoHClient::builder("1.1.1.1:443".parse().unwrap()).build(),
-                DoHClient::builder("1.0.0.1:443".parse().unwrap()).build(),
+                DoHClient::builder("1.0.0.1:443".parse().unwrap())
+                    .host("one.one.one.one")
+                    .build(),
+                DoHClient::builder("1.1.1.1:443".parse().unwrap())
+                    .host("one.one.one.one")
+                    .build(),
             ]
         });
         static IDX: Lazy<AtomicUsize> = Lazy::new(AtomicUsize::default);
@@ -130,24 +134,6 @@ impl DoHClient {
                     .build(),
                 DoHClient::builder("223.6.6.6:443".parse().unwrap())
                     .host("dns.alidns.com")
-                    .build(),
-            ]
-        });
-        static IDX: Lazy<AtomicUsize> = Lazy::new(AtomicUsize::default);
-
-        let i = IDX.fetch_add(1, Ordering::SeqCst) % CLIENTS.len();
-
-        Clone::clone(&CLIENTS[i])
-    }
-
-    pub fn quad9() -> Self {
-        static CLIENTS: Lazy<[DoHClient; 2]> = Lazy::new(|| {
-            [
-                DoHClient::builder("9.9.9.9:443".parse().unwrap())
-                    .host("dns.quad9.net")
-                    .build(),
-                DoHClient::builder("149.112.112.112:443".parse().unwrap())
-                    .host("dns.quad9.net")
                     .build(),
             ]
         });
@@ -176,7 +162,7 @@ impl DoHClient {
         // https://www.rfc-editor.org/rfc/rfc8484.html#section-6
         // https://www.rfc-editor.org/rfc/rfc4648#section-5
         let b64req = {
-            use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+            use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
             URL_SAFE_NO_PAD.encode(req)
         };
 
@@ -195,7 +181,7 @@ impl DoHClient {
 
             write!(&mut buf, "Host: {}{}", &self.host, CRLF)?;
             write!(&mut buf, "User-Agent: zerodns/0.1.0{}", CRLF)?;
-            write!(&mut buf, "Accept: application/dns-message{}", CRLF)?;
+            write!(&mut buf, "Accept: application/dns-message {}", CRLF)?;
             write!(&mut buf, "{}", CRLF)?;
 
             w.write_all(&buf[..]).await?;
@@ -276,9 +262,11 @@ mod tests {
         pretty_env_logger::try_init_timed().ok();
     }
 
-    #[tokio::test]
+    #[tokio_shared_rt::test(shared)]
     async fn test_doh_client() -> anyhow::Result<()> {
         init();
+
+        let mut id = 0x1000;
 
         for c in [
             DoHClient::aliyun(),
@@ -287,36 +275,28 @@ mod tests {
             DoHClient::cloudflare(),
             DoHClient::google(),
             DoHClient::google(),
-            DoHClient::quad9(),
-            DoHClient::quad9(),
         ] {
             for question in ["www.youtube.com", "www.taobao.com", "x.com"] {
-                info!("-------- resolve {} from {} --------", question, &c);
+                id += 1;
 
+                info!("-------- resolve {} from {} --------", question, &c);
                 let req = Message::builder()
-                    .id(0x1234)
+                    .id(id)
                     .flags(Flags::builder().request().recursive_query(true).build())
                     .question(question, Kind::A, Class::IN)
                     .build()?;
-                let res = c.request(&req).await;
-
-                if let Err(e) = &res {
-                    error!("cannot request: {}", e);
+                let msg = c.request(&req).await?;
+                for next in msg.answers() {
+                    info!(
+                        "{}.\t{}\t{:?}\t{:?}\t{}",
+                        next.name(),
+                        next.time_to_live(),
+                        next.class(),
+                        next.kind(),
+                        next.rdata()?
+                    );
                 }
-
-                assert!(res.is_ok_and(|msg| {
-                    for next in msg.answers() {
-                        info!(
-                            "{}.\t{}\t{:?}\t{:?}\t{}",
-                            next.name(),
-                            next.time_to_live(),
-                            next.class(),
-                            next.kind(),
-                            next.rdata().unwrap()
-                        );
-                    }
-                    msg.answer_count() > 0
-                }));
+                assert!(msg.answer_count() > 0);
             }
         }
 

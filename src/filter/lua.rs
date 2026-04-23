@@ -1,8 +1,8 @@
 use super::proto::Filter;
 use crate::cachestr::Cachestr;
 use crate::client::request as resolve;
-use crate::filter::{handle_next, Context, ContextFlags, FilterFactory, Options};
-use crate::protocol::{Class, Flags, Kind, Message, OpCode, RCode, RDataOwned, DNS};
+use crate::filter::{Context, ContextFlags, FilterFactory, Options, handle_next};
+use crate::protocol::{Class, DNS, Flags, Kind, Message, OpCode, RCode, RDataOwned};
 use async_trait::async_trait;
 use mlua::prelude::*;
 use mlua::{Function, Lua, MetaMethod, UserData, Variadic};
@@ -18,6 +18,7 @@ use tokio::sync::Mutex;
 
 static RUNTIME: Lazy<runtime::Runtime> = Lazy::new(|| {
     runtime::Builder::new_multi_thread()
+        .name("zerodns-lua-runtime")
         .enable_all()
         .build()
         .unwrap()
@@ -79,7 +80,14 @@ impl UserData for LuaMessageBuilder {
             let typ = parse_kind(typ)?;
 
             let to_str = || {
-                data.as_str().ok_or_else(|| LuaError::external(anyhow!("incorrect data type '{}', expect is 'string'",data.type_name())))
+                data.as_string()
+                    .and_then(|s| s.to_str().ok())
+                    .ok_or_else(|| {
+                        LuaError::external(anyhow!(
+                            "incorrect data type '{}', expect is 'string'",
+                            data.type_name()
+                        ))
+                    })
             };
             let to_table = || {
                 data.as_table().ok_or_else(|| LuaError::external(anyhow!("incorrect data type '{}', expect is 'table'",data.type_name())))
@@ -549,7 +557,7 @@ impl TryFrom<&Options> for LuaFilterFactory {
 }
 
 fn parse_class(v: LuaValue) -> LuaResult<Class> {
-    if let Some(s) = v.as_str() {
+    if let Some(s) = v.as_string().and_then(|s| s.to_str().ok()) {
         let class = s.parse::<Class>()?;
         return Ok(class);
     }
@@ -566,7 +574,7 @@ fn parse_class(v: LuaValue) -> LuaResult<Class> {
 }
 
 fn parse_kind(v: LuaValue) -> LuaResult<Kind> {
-    if let Some(s) = v.as_str() {
+    if let Some(s) = v.as_string().and_then(|s| s.to_str().ok()) {
         let kind = s.parse::<Kind>()?;
         return Ok(kind);
     }
@@ -590,7 +598,7 @@ mod tests {
         pretty_env_logger::try_init_timed().ok();
     }
 
-    #[tokio::test]
+    #[tokio_shared_rt::test(shared)]
     async fn test_lua() -> anyhow::Result<()> {
         init();
 
