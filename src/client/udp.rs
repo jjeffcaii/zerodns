@@ -4,11 +4,11 @@ use once_cell::sync::Lazy;
 use socket2::{Domain, Protocol, Type};
 use std::fmt::{Display, Formatter};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
-use std::sync::atomic::{AtomicU16, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU16, AtomicUsize, Ordering};
 use std::time::Duration;
 use tokio::net::UdpSocket;
-use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
+use tokio::sync::{Mutex, RwLock, mpsc, oneshot};
 use tokio_util::codec::BytesCodec;
 use tokio_util::udp::UdpFramed;
 
@@ -303,7 +303,7 @@ mod tests {
         pretty_env_logger::try_init_timed().ok();
     }
 
-    #[tokio::test]
+    #[tokio_shared_rt::test(shared)]
     #[ignore]
     async fn test_weird() -> anyhow::Result<()> {
         init();
@@ -336,24 +336,28 @@ mod tests {
                 next.time_to_live(),
                 next.class(),
                 next.kind(),
-                next.rdata().unwrap()
+                next.rdata()?
             );
         }
 
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio_shared_rt::test(shared)]
     async fn test_request() -> anyhow::Result<()> {
         init();
+
+        let mut id = 0x2026;
 
         for c in &[
             UdpClient::google(),
             UdpClient::cloudflare(),
             UdpClient::aliyun(),
         ] {
+            id += 1;
+
             let req = Message::builder()
-                .id(0x1234)
+                .id(id)
                 .flags(
                     Flags::builder()
                         .request()
@@ -364,27 +368,25 @@ mod tests {
                 .question("www.google.com", Kind::HTTPS, Class::IN)
                 .build()?;
 
-            let res = c.request(&req).await;
+            let msg = c.request(&req).await?;
 
-            assert!(res.is_ok_and(|msg| {
-                for next in msg.answers() {
-                    info!(
-                        "{}.\t{}\t{:?}\t{:?}\t{}",
-                        next.name(),
-                        next.time_to_live(),
-                        next.class(),
-                        next.kind(),
-                        next.rdata().unwrap()
-                    );
-                }
-                msg.answer_count() > 0
-            }));
+            for next in msg.answers() {
+                info!(
+                    "{}.\t{}\t{:?}\t{:?}\t{}",
+                    next.name(),
+                    next.time_to_live(),
+                    next.class(),
+                    next.kind(),
+                    next.rdata()?
+                );
+            }
+            assert!(msg.answer_count() > 0);
         }
 
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio_shared_rt::test(shared)]
     #[ignore]
     async fn test_concurrency() -> anyhow::Result<()> {
         init();

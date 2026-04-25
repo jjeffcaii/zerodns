@@ -10,8 +10,8 @@ use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 use tokio_util::codec::{FramedRead, FramedWrite};
 
-use crate::protocol::{Codec, Message};
 use crate::Result;
+use crate::protocol::{Codec, Message};
 
 use super::Client;
 
@@ -154,9 +154,11 @@ mod tests {
         pretty_env_logger::try_init_timed().ok();
     }
 
-    #[tokio::test]
+    #[tokio_shared_rt::test(shared)]
     async fn test_request() -> Result<()> {
         init();
+
+        let mut id = 0x1200;
 
         for c in [
             TcpClient::google(),
@@ -167,26 +169,26 @@ mod tests {
             for question in ["www.youtube.com", "www.taobao.com", "x.com"] {
                 info!("======= resolve {} from {} =======", question, &c);
 
+                id += 1;
+
                 let req = Message::builder()
-                    .id(0x1234)
+                    .id(id)
                     .flags(Flags::builder().request().recursive_query(true).build())
                     .question(question, Kind::A, Class::IN)
                     .build()?;
-                let res = c.request(&req).await;
+                let msg = c.request(&req).await?;
 
-                assert!(res.is_ok_and(|msg| {
-                    for next in msg.answers() {
-                        info!(
-                            "{}.\t{}\t{:?}\t{:?}\t{}",
-                            next.name(),
-                            next.time_to_live(),
-                            next.class(),
-                            next.kind(),
-                            next.rdata().unwrap()
-                        );
-                    }
-                    msg.answer_count() > 0
-                }));
+                for next in msg.answers() {
+                    info!(
+                        "{}.\t{}\t{:?}\t{:?}\t{}",
+                        next.name(),
+                        next.time_to_live(),
+                        next.class(),
+                        next.kind(),
+                        next.rdata()?
+                    );
+                }
+                assert!(msg.answer_count() > 0);
             }
         }
 

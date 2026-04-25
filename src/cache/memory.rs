@@ -1,6 +1,6 @@
+use crate::Result;
 use crate::cache::{Loader, LoadingCache};
 use crate::protocol::Message;
-use crate::Result;
 use async_trait::async_trait;
 use moka::future::Cache;
 use std::time::{Duration, Instant};
@@ -96,10 +96,10 @@ impl LoadingCache for MemoryLoadingCache {
 mod tests {
     use super::*;
     use crate::protocol::{Class, Flags, Kind, RCode};
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
-    #[tokio::test]
+    #[tokio_shared_rt::test(shared)]
     async fn test_load() {
         let id = 0x3344u16;
 

@@ -1,5 +1,5 @@
-use crate::protocol::Message;
 use crate::Result;
+use crate::protocol::Message;
 use std::net::SocketAddr;
 
 #[derive(Debug, Copy, Clone, Default, Hash, PartialEq, Eq)]
@@ -71,10 +71,10 @@ mod tests {
         fn set_next(&mut self, next: Box<dyn Filter>) {}
     }
 
-    #[tokio::test]
+    #[tokio_shared_rt::test(shared)]
     async fn test_filter() {
         let mut ctx = Context::default();
-        let f = AlwaysNoneFilter::default();
+        let f = AlwaysNoneFilter;
         let mut req = Message::builder().build().unwrap();
         let mut res = None;
 

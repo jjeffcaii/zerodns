@@ -3,7 +3,7 @@ extern crate anyhow;
 #[macro_use]
 extern crate log;
 
-use clap::{arg, command, value_parser, ArgAction, Command};
+use clap::{ArgAction, Command, arg, command, value_parser};
 use zerodns::protocol::{Class, Kind};
 
 mod cmds;

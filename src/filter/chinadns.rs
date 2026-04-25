@@ -7,11 +7,11 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
 
-use crate::filter::misc::OptionsReader;
-use crate::protocol::{Kind, Message, RData, DNS};
 use crate::Result;
+use crate::filter::misc::OptionsReader;
+use crate::protocol::{DNS, Kind, Message, RData};
 
-use super::{handle_next, Context, Filter, FilterFactory, Options};
+use super::{Context, Filter, FilterFactory, Options, handle_next};
 
 pub(crate) struct ChinaDNSFilter {
     trusted: Arc<Vec<DNS>>,
@@ -70,9 +70,9 @@ impl ChinaDNSFilter {
     #[inline(always)]
     fn is_china(geoip: &Reader<Vec<u8>>, addr: Ipv4Addr) -> bool {
         let mut is_china = false;
-        if let Ok(country) = geoip.lookup::<maxminddb::geoip2::Country>(IpAddr::V4(addr)) {
-            if let Some(country) = country.country {
-                is_china = matches!(country.iso_code, Some("CN"));
+        if let Ok(result) = geoip.lookup(IpAddr::V4(addr)) {
+            if let Ok(Some(country)) = result.decode::<maxminddb::geoip2::Country>() {
+                is_china = matches!(country.country.iso_code, Some("CN"));
             }
         }
         debug!("{:?}: is_china={}", addr, is_china);
@@ -192,7 +192,7 @@ mod tests {
         pretty_env_logger::try_init_timed().ok();
     }
 
-    #[tokio::test]
+    #[tokio_shared_rt::test(shared)]
     async fn test_chinadns() -> Result<()> {
         init();
 

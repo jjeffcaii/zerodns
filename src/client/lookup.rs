@@ -6,7 +6,7 @@ use crate::{Error, Result};
 use hashbrown::HashMap;
 use moka::future::Cache;
 use once_cell::sync::Lazy;
-use rand::Rng;
+use rand::RngExt;
 use smallvec::SmallVec;
 use std::net::Ipv4Addr;
 use std::time::Duration;

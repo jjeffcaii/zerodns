@@ -1,7 +1,7 @@
 use std::str::FromStr;
 
-use crate::protocol::DNS;
 use crate::Result;
+use crate::protocol::DNS;
 
 use super::Options;
 
@@ -16,14 +16,14 @@ impl OptionsReader<'_> {
             None => Ok(None),
             Some(v) => match v.as_array() {
                 None => {
-                    bail!("invalid dns urls: '{}'", v.to_string());
+                    bail!("invalid dns urls: '{}'", v);
                 }
                 Some(arr) => {
                     let mut servers = vec![];
                     for next in arr {
                         match next.as_str() {
                             None => {
-                                bail!("invalid dns urls: '{}'", v.to_string());
+                                bail!("invalid dns urls: '{}'", v);
                             }
                             Some(s) => {
                                 servers.push(DNS::from_str(s)?);

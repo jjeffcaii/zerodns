@@ -1,7 +1,7 @@
 use super::Client;
-use crate::misc::tls;
-use crate::protocol::{Codec, Message, DEFAULT_DOT_PORT};
 use crate::Result;
+use crate::misc::tls;
+use crate::protocol::{Codec, DEFAULT_DOT_PORT, Message};
 
 use futures::{SinkExt, StreamExt};
 use once_cell::sync::Lazy;
@@ -139,15 +139,15 @@ impl DoTClientBuilder {
 
 #[cfg(test)]
 mod tests {
-    use crate::client::dot::DoTClient;
     use crate::client::Client;
+    use crate::client::dot::DoTClient;
     use crate::protocol::*;
 
     fn init() {
         pretty_env_logger::try_init_timed().ok();
     }
 
-    #[tokio::test]
+    #[tokio_shared_rt::test(shared)]
     async fn test_dot_client() -> anyhow::Result<()> {
         init();
 

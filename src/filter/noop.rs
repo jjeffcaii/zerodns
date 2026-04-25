@@ -4,7 +4,7 @@ use crate::Result;
 use async_trait::async_trait;
 use once_cell::sync::Lazy;
 
-use crate::filter::{handle_next, Context, FilterFactory, Options};
+use crate::filter::{Context, FilterFactory, Options, handle_next};
 use crate::protocol::Message;
 
 use super::proto::Filter;

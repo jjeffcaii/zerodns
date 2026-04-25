@@ -94,7 +94,7 @@ pub async fn run(c: Config, closer: Arc<Notify>) -> anyhow::Result<()> {
             socket.set_recv_buffer_size(4096)?;
             socket.set_send_buffer_size(4096)?;
             socket.set_nonblocking(true)?;
-            socket.set_nodelay(true)?;
+            socket.set_tcp_nodelay(true)?;
 
             socket.bind(&addr)?;
 

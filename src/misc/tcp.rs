@@ -58,7 +58,7 @@ impl Manager {
             let dst = SockAddr::from(self.key.0);
 
             let socket = socket2::Socket::new(Domain::IPV4, Type::STREAM, Some(Protocol::TCP))?;
-            socket.set_nodelay(true)?;
+            socket.set_tcp_nodelay(true)?;
             socket.set_keepalive(true)?;
 
             if let Some(source) = self.key.1 {

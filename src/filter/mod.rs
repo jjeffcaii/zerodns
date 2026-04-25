@@ -6,9 +6,9 @@ pub(crate) use noop::NoopFilter;
 pub(crate) use noop::NoopFilterFactory;
 pub use proto::{Context, ContextFlags, Filter};
 pub(crate) use proxyby::ProxyByFilterFactory;
-pub(crate) use registry::load;
 pub(crate) use registry::FilterFactoryExt;
-pub use registry::{register, FilterFactory, Options};
+pub(crate) use registry::load;
+pub use registry::{FilterFactory, Options, register};
 
 pub(crate) use proto::handle_next;
 
@@ -20,4 +20,3 @@ mod noop;
 mod proto;
 mod proxyby;
 mod registry;
-mod wasm;

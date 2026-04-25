@@ -1,6 +1,6 @@
 use crate::filter::{
-    register, ChinaDNSFilterFactory, HostsFilterFactory, LuaFilterFactory, NoopFilterFactory,
-    Options, ProxyByFilterFactory,
+    ChinaDNSFilterFactory, HostsFilterFactory, LuaFilterFactory, NoopFilterFactory, Options,
+    ProxyByFilterFactory, register,
 };
 use crate::logger::{self, Config as LoggerConfig};
 
@@ -23,7 +23,7 @@ pub fn setup_logger(c: &LoggerConfig) -> crate::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use crate::filter::{load, Options};
+    use crate::filter::{Options, load};
 
     use super::*;
 

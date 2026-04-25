@@ -5,8 +5,8 @@ use crate::handler::Handler;
 use crate::protocol::{Flags, Message, RCode};
 use crate::{Error as ZError, Result};
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 fn validate_request(req: &Message) -> Result<()> {
     for question in req.questions() {

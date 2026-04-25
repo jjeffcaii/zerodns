@@ -1,5 +1,5 @@
-use super::{handle_next, Context, Filter, FilterFactory, Options};
-use crate::{cachestr::Cachestr, protocol::*, Result};
+use super::{Context, Filter, FilterFactory, Options, handle_next};
+use crate::{Result, cachestr::Cachestr, protocol::*};
 use hashbrown::HashMap;
 use once_cell::sync::Lazy;
 use smallvec::SmallVec;
@@ -260,7 +260,7 @@ mod tests {
         pretty_env_logger::try_init_timed().ok();
     }
 
-    #[tokio::test]
+    #[tokio_shared_rt::test(shared)]
     async fn test_hosts_filter() -> anyhow::Result<()> {
         init();
 

@@ -1,7 +1,7 @@
 use crate::Result;
 use deadpool::managed;
 use deadpool::managed::{Metrics, RecycleError, RecycleResult};
-use futures::{future, FutureExt};
+use futures::{FutureExt, future};
 use hashbrown::HashMap;
 use once_cell::sync::Lazy;
 use parking_lot::RwLock;
@@ -11,7 +11,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpStream;
-use tokio_rustls::{client::TlsStream, TlsConnector};
+use tokio_rustls::{TlsConnector, client::TlsStream};
 
 pub(crate) static DEFAULT_TLS_CLIENT_CONFIG: Lazy<Arc<rustls::ClientConfig>> = Lazy::new(|| {
     let root_store = rustls::RootCertStore {

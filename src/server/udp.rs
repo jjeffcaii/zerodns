@@ -7,10 +7,10 @@ use tokio_util::codec::BytesCodec;
 use tokio_util::udp::UdpFramed;
 
 use super::helper;
+use crate::Result;
 use crate::cache::LoadingCache;
 use crate::handler::Handler;
 use crate::protocol::Message;
-use crate::Result;
 
 pub struct UdpServer<H, C> {
     h: H,
@@ -133,7 +133,7 @@ mod tests {
     use crate::cache::MemoryLoadingCache;
     use crate::client::request;
     use crate::filter::Context;
-    use crate::protocol::{Class, Flags, Kind, Message, DNS};
+    use crate::protocol::{Class, DNS, Flags, Kind, Message};
     use std::str::FromStr;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::Duration;
@@ -156,12 +156,14 @@ mod tests {
         pretty_env_logger::try_init_timed().ok();
     }
 
-    #[tokio::test]
+    #[tokio_shared_rt::test(shared)]
     async fn test_udp_listen() -> anyhow::Result<()> {
         init();
 
         let res = {
-            let raw = hex::decode("0001818000010003000100000770616e63616b65056170706c6503636f6d0000410001c00c00050001000050bd00220770616e63616b650963646e2d6170706c6503636f6d06616b61646e73036e657400c02f000500010000012c00170d6170706c65646f776e6c6f61640671746c63646ec01ac05d000500010000000500210d6170706c65646f776e6c6f61640671746c63646e03636f6d0563646e6d67c01ac099000600010000003c003004646e73310563646e3230036f726700097765626d6173746572c09954cace5700002a3000000e1000093a800000003c")?;
+            let raw = hex::decode(
+                "0001818000010003000100000770616e63616b65056170706c6503636f6d0000410001c00c00050001000050bd00220770616e63616b650963646e2d6170706c6503636f6d06616b61646e73036e657400c02f000500010000012c00170d6170706c65646f776e6c6f61640671746c63646ec01ac05d000500010000000500210d6170706c65646f776e6c6f61640671746c63646e03636f6d0563646e6d67c01ac099000600010000003c003004646e73310563646e3230036f726700097765626d6173746572c09954cace5700002a3000000e1000093a800000003c",
+            )?;
             Message::from(raw)
         };
 
@@ -195,14 +197,18 @@ mod tests {
         let dns = DNS::from_str(&format!("127.0.0.1:{}", port))?;
 
         // no cache
-        assert!(request(&dns, &req, Duration::from_secs(3))
-            .await
-            .is_ok_and(|msg| &msg == &res));
+        assert!(
+            request(&dns, &req, Duration::from_secs(3))
+                .await
+                .is_ok_and(|msg| msg == res)
+        );
 
         // use cache
-        assert!(request(&dns, &req, Duration::from_secs(3))
-            .await
-            .is_ok_and(|msg| &msg == &res));
+        assert!(
+            request(&dns, &req, Duration::from_secs(3))
+                .await
+                .is_ok_and(|msg| msg == res)
+        );
 
         assert_eq!(
             1,
