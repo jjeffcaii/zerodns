@@ -34,11 +34,18 @@ async fn main() -> anyhow::Result<()> {
                 .arg(arg!(--noedns "disable EDNS"))
                 .arg(arg!([DOMAIN] "the domain to be resolved")),
         )
+        .subcommand(
+            Command::new("init")
+                .about("Generate a new configuration template")
+                .arg(arg!(-o --output <FILE> "output file path").default_value("zerodns.toml"))
+                .arg(arg!(--force "overwrite existing file")),
+        )
         .get_matches();
 
     match cmds.subcommand() {
         Some(("run", sm)) => cmds::run(sm).await?,
         Some(("resolve", sm)) => cmds::resolve(sm).await?,
+        Some(("init", sm)) => cmds::init(sm).await?,
         _ => unreachable!("no sub-command"),
     }
 

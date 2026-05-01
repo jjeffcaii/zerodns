@@ -1,0 +1,58 @@
+use anyhow::Result;
+use clap::ArgMatches;
+use std::path::Path;
+
+const TEMPLATE: &str = r#"[global]
+nameservers = ["223.5.5.5", "223.6.6.6"]
+
+[server]
+listen = "0.0.0.0:53"
+cache_size = 5000
+
+[filters.default]
+kind = "proxyby"
+props.addr = "223.5.5.5:53"
+
+# Example: DNS-over-HTTPS upstream via Lua scripting
+# [filters.doh]
+# kind = "lua"
+# props.script = """
+# local resolver = Resolver("https://one.one.one.one/dns-query")
+# function handle(ctx)
+#   ctx:answer(resolver:resolve(ctx.request))
+# end
+# """
+
+# Example: ChinaDNS split routing (requires GeoLite2-Country.mmdb)
+# [filters.china]
+# kind = "chinadns"
+# props.trusted   = ["8.8.8.8:53", "8.8.4.4:53"]
+# props.mistrusted = ["223.5.5.5:53", "114.114.114.114:53"]
+# props.database  = "/path/to/GeoLite2-Country.mmdb"
+
+# Example: static hosts file
+# [filters.local]
+# kind = "hosts"
+# props.path = "/etc/hosts"
+
+[[rules]]
+domain = "*"
+filters = ["default"]
+"#;
+
+pub(crate) async fn execute(sm: &ArgMatches) -> Result<()> {
+    let output = sm
+        .get_one::<String>("output")
+        .map(String::as_str)
+        .unwrap_or("config.toml");
+    let path = Path::new(output);
+
+    if path.exists() && !sm.get_flag("force") {
+        anyhow::bail!("file '{}' already exists, use --force to overwrite", output);
+    }
+
+    std::fs::write(path, TEMPLATE)?;
+    println!("Config template written to '{}'", output);
+
+    Ok(())
+}

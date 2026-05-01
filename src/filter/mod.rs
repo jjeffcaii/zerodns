@@ -1,5 +1,6 @@
 pub(crate) use chinadns::ChinaDNSFilterFactory;
 pub(crate) use hosts::HostsFilterFactory;
+pub(crate) use js::JSFilterFactory;
 pub(crate) use lua::LuaFilterFactory;
 #[cfg(test)]
 pub(crate) use noop::NoopFilter;
@@ -14,6 +15,7 @@ pub(crate) use proto::handle_next;
 
 mod chinadns;
 mod hosts;
+mod js;
 mod lua;
 mod misc;
 mod noop;

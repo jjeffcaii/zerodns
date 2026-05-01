@@ -5,54 +5,28 @@ nameservers = ["223.5.5.5", "223.6.6.6"]
 listen = "0.0.0.0:5454"
 cache_size = 5000
 
-[filters.alidns]
-kind = "proxyby"
-props.servers = ["223.5.5.5", "223.6.6.6"]
-
-[filters.cloudflare]
-kind = "proxyby"
-props.servers = ["doh://1.1.1.1"]
-
-[filters.opendns]
-kind = "proxyby"
-props.servers = ["tcp://208.67.222.222:443", "tcp://208.67.220.220:443"]
-
-[filters.chinadns]
-kind = "chinadns"
-props.trusted = ["doh://dns.google", "dot://dot.pub"]
-props.mistrusted = ["223.5.5.5", "223.6.6.6"]
-props.geoip_database = "GeoLite2-Country.mmdb"
-
-[filters.custom]
-kind = "hosts"
-props.hosts = { "127.0.0.1" = "localhost", "::1" = "localhost", "1.1.1.1" = "one.one.one.one", "223.5.5.5" = "dns.alidns.com" }
-
 [filters.lua]
 kind = "lua"
 props.script = """
-
-local resolver = Resolver('223.5.5.5', '223.6.6.6')
+local seq = 0
+local resolvers = {
+  -- Resolver('223.5.5.5', '223.6.6.6'),
+  -- Resolver("https://one.one.one.one/dns-query"),
+  -- Resolver("tls://dns.google"),
+  -- Resolver("insecure+https://dns.google/dns-query"),
+  Resolver("insecure+https://doh.pub/dns-query"),
+}
 
 -- The filter entrance:
 function handle(ctx)
-  -- log something...
-  local in_china = false
-  for i,v in ipairs(ctx.request:questions()) do
-    logger:info('---- question#'..i..': '..v.name)
-  end
-
-  -- resolve addr from your resolver
-  local resp = resolver:resolve(ctx.request)
-
-  -- log something...
-  for i,v in ipairs(resp:answers()) do
-    logger:info('---- answers#'..i..': name='..v.name..', rdata='..v.rdata)
-  end
-
-  -- answer it!
   ctx:nocache()
-  ctx:answer(resp)
 
+  local i = 1 + (seq % #resolvers)
+  local resolver = resolvers[i]
+  logger:info("use #"..tostring(i)..' resolver => '..tostring(resolver))
+  seq = seq + 1
+
+  ctx:answer(resolver:resolve(ctx.request))
 end
 """
 

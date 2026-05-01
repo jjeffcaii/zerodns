@@ -47,7 +47,7 @@ where
             for next in res.answers() {
                 if let Ok(rdata) = next.rdata() {
                     if cached {
-                        info!(
+                        debug!(
                             "0x{:04x} <- {}.\t{}\t{:?}\t{:?}\t{}\t<CACHE>",
                             res.id(),
                             next.name(),
@@ -57,7 +57,7 @@ where
                             rdata,
                         );
                     } else {
-                        info!(
+                        debug!(
                             "0x{:04x} <- {}.\t{}\t{:?}\t{:?}\t{}",
                             res.id(),
                             next.name(),
@@ -103,7 +103,7 @@ where
 
                             if req.question_count() > 0 {
                                 for next in req.questions() {
-                                    info!("0x{:04x} -> {}.\t\t{:?}\t{:?}", req.id(), next.name(), next.class(), next.kind());
+                                    debug!("0x{:04x} -> {}.\t\t{:?}\t{:?}", req.id(), next.name(), next.class(), next.kind());
                                 }
                             }
 

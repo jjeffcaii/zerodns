@@ -1,0 +1,38 @@
+[global]
+nameservers = ["223.5.5.5", "223.6.6.6"]
+
+[server]
+listen = "0.0.0.0:5454"
+cache_size = 5000
+
+[filters.js_filter]
+kind = "js"
+props.script = """
+let seq = 0;
+const resolvers = [
+  new Resolver("223.5.5.5","223.6.6.6"),
+  new Resolver("tls://dns.google"),
+  new Resolver("https://dns.google/dns-query")
+];
+
+function handle(ctx) {
+  ctx.nocache();
+
+  logger.info(`request:\n${ctx.request}`);
+
+  const i = seq % resolvers.length;
+  const resolver = resolvers[i];
+  logger.info(`use #${i} resolver => ${resolver}`);
+  seq++;
+
+  const response = resolver.resolve(ctx.request);
+
+  logger.info(`response:\n${response}`);
+
+  ctx.answer(response);
+}
+"""
+
+[[rules]]
+domain = "*"
+filters = ["js_filter"]

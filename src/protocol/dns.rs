@@ -15,8 +15,8 @@ pub const DEFAULT_TLS_PORT: u16 = 443;
 pub enum DNS {
     UDP(SocketAddr),
     TCP(SocketAddr),
-    DoT(Address),
-    DoH(DoHAddress),
+    TLS(Address, /* insecure */ bool),
+    HTTP(DoHAddress, /* insecure */ bool),
 }
 
 impl Display for DNS {
@@ -24,8 +24,22 @@ impl Display for DNS {
         match self {
             DNS::UDP(addr) => write!(f, "udp://{}", addr),
             DNS::TCP(addr) => write!(f, "tcp://{}", addr),
-            DNS::DoT(addr) => write!(f, "dot://{}", addr),
-            DNS::DoH(addr) => write!(f, "doh+{}", addr),
+            DNS::TLS(addr, insecure) => {
+                if *insecure {
+                    write!(f, "insecure+tls://{}", addr)
+                } else {
+                    write!(f, "tls://{}", addr)
+                }
+            }
+            DNS::HTTP(addr, insecure) => {
+                if !addr.https {
+                    write!(f, "{}", addr)
+                } else if *insecure {
+                    write!(f, "insecure+{}", addr)
+                } else {
+                    write!(f, "{}", addr)
+                }
+            }
         }
     }
 }
@@ -130,35 +144,56 @@ impl DNS {
                     }
                 }
             }
-            "dot" => {
+            "tls" | "dot" => {
                 if let Some(addr) = extract_addr(DEFAULT_DOT_PORT) {
-                    return Some(DNS::DoT(addr));
+                    return Some(DNS::TLS(addr, false));
                 }
             }
-            "doh" | "doh+https" | "https" => {
+            "insecure+tls" | "tls+insecure" | "insecure+dot" | "dot+insecure" => {
+                if let Some(addr) = extract_addr(DEFAULT_DOT_PORT) {
+                    return Some(DNS::TLS(addr, true));
+                }
+            }
+            "https" => {
                 if let Some(addr) = extract_addr(DEFAULT_TLS_PORT) {
                     let path = match url.path() {
                         "" | "/" => None,
                         other => Some(Cachestr::from(other)),
                     };
-                    return Some(DNS::DoH(DoHAddress {
+                    let addr = DoHAddress {
                         addr,
                         path,
                         https: true,
-                    }));
+                    };
+                    return Some(DNS::HTTP(addr, false));
                 }
             }
-            "doh+http" | "http" => {
+            "insecure+https" | "https+insecure" => {
+                if let Some(addr) = extract_addr(DEFAULT_TLS_PORT) {
+                    let path = match url.path() {
+                        "" | "/" => None,
+                        other => Some(Cachestr::from(other)),
+                    };
+                    let addr = DoHAddress {
+                        addr,
+                        path,
+                        https: true,
+                    };
+                    return Some(DNS::HTTP(addr, true));
+                }
+            }
+            "http" => {
                 if let Some(addr) = extract_addr(DEFAULT_HTTP_PORT) {
                     let path = match url.path() {
                         "" | "/" => None,
                         other => Some(Cachestr::from(other)),
                     };
-                    return Some(DNS::DoH(DoHAddress {
+                    let addr = DoHAddress {
                         addr,
                         path,
                         https: false,
-                    }));
+                    };
+                    return Some(DNS::HTTP(addr, false));
                 }
             }
             _ => (),
@@ -206,17 +241,19 @@ mod tests {
             ("1.1.1.1", "udp://1.1.1.1:53"),
             ("udp://1.1.1.1", "udp://1.1.1.1:53"),
             ("tcp://1.1.1.1", "tcp://1.1.1.1:53"),
-            ("dot://1.1.1.1", "dot://1.1.1.1:853"),
-            ("dot://one.one.one.one", "dot://one.one.one.one:853"),
-            ("doh://dns.google", "doh+https://dns.google.com:443"),
+            ("tls://one.one.one.one", "tls://one.one.one.one:853"),
+            ("https://dns.google", "https://dns.google:443"),
             (
-                "doh://dns.google/dns-query",
-                "doh+https://dns.google.com:443/dns-query",
+                "https://dns.google/dns-query",
+                "https://dns.google.com:443/dns-query",
             ),
-            ("doh://1.1.1.1", "doh+https://1.1.1.1"),
-            ("http://1.2.3.4", "doh+http://1.2.3.4:80"),
-            ("https://1.1.1.1", "doh+http://1.1.1.1:443"),
-            ("doh+https://1.1.1.1", "doh+https://1.1.1.1"),
+            ("https://1.1.1.1", "https://1.1.1.1"),
+            ("http://1.2.3.4", "http://1.2.3.4:80"),
+            ("insecure+https://1.1.1.1", "insecure+https://1.1.1.1:443"),
+            (
+                "https+insecure://dns.google",
+                "insecure+https://dns.google:443",
+            ),
         ] {
             let actual = input.parse::<DNS>();
             assert!(actual.is_ok_and(|dns| {

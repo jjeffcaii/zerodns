@@ -18,6 +18,7 @@ use crate::Error::NetworkFailure;
 
 pub struct DoHClientBuilder<'a> {
     https: bool,
+    insecure: bool,
     addr: SocketAddr,
     host: Option<&'a str>,
     path: Option<&'a str>,
@@ -45,6 +46,11 @@ impl<'a> DoHClientBuilder<'a> {
         self
     }
 
+    pub fn insecure(mut self, insecure: bool) -> Self {
+        self.insecure = insecure;
+        self
+    }
+
     pub fn build(self) -> DoHClient {
         let Self {
             https,
@@ -52,10 +58,20 @@ impl<'a> DoHClientBuilder<'a> {
             host,
             path,
             timeout,
+            insecure,
         } = self;
         let host = host
             .map(|it| it.to_string())
             .unwrap_or_else(|| addr.ip().to_string());
+
+        debug!(
+            "create DoH client: addr={}, host={}, https={}, timeout={}, insecure={}",
+            &addr,
+            &host,
+            https,
+            timeout.as_secs(),
+            &insecure
+        );
 
         DoHClient {
             https,
@@ -63,6 +79,7 @@ impl<'a> DoHClientBuilder<'a> {
             host: Arc::new(host),
             path: path.map(|it| Arc::new(it.to_string())),
             timeout,
+            insecure,
         }
     }
 }
@@ -74,6 +91,7 @@ pub struct DoHClient {
     host: Arc<String>,
     path: Option<Arc<String>>,
     timeout: Duration,
+    insecure: bool,
 }
 
 impl DoHClient {
@@ -83,6 +101,7 @@ impl DoHClient {
         let https = addr.port() == DEFAULT_TLS_PORT;
         DoHClientBuilder {
             https,
+            insecure: false,
             addr,
             host: None,
             path: None,
@@ -236,9 +255,14 @@ impl Display for DoHClient {
 #[async_trait::async_trait]
 impl Client for DoHClient {
     async fn request(&self, req: &Message) -> crate::Result<Message> {
+        use crate::misc::tls;
         if self.https {
-            let key = (Clone::clone(&self.host), Clone::clone(&self.addr));
-            let pool = crate::misc::tls::get(key)?;
+            let mut flags = tls::FLAG_ALPN;
+            if self.insecure {
+                flags |= tls::FLAG_INSECURE;
+            }
+
+            let pool = tls::get(&self.host, Clone::clone(&self.addr), flags)?;
 
             let mut obj = pool
                 .get()

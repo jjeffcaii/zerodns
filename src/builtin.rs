@@ -1,6 +1,6 @@
 use crate::filter::{
-    ChinaDNSFilterFactory, HostsFilterFactory, LuaFilterFactory, NoopFilterFactory, Options,
-    ProxyByFilterFactory, register,
+    ChinaDNSFilterFactory, HostsFilterFactory, JSFilterFactory, LuaFilterFactory,
+    NoopFilterFactory, Options, ProxyByFilterFactory, register,
 };
 use crate::logger::{self, Config as LoggerConfig};
 
@@ -13,6 +13,7 @@ pub fn setup() {
         ChinaDNSFilterFactory::try_from(opts)
     });
     register("lua", |opts: &Options| LuaFilterFactory::try_from(opts));
+    register("js", |opts: &Options| JSFilterFactory::try_from(opts));
     register("hosts", |opts: &Options| HostsFilterFactory::try_from(opts));
 }
 
@@ -75,6 +76,20 @@ mod tests {
             )
             .unwrap();
             assert!(load("lua", &opts).is_ok());
+        }
+
+        // js
+        {
+            let opts: Options = toml::from_str(
+                r#"
+            script = """
+            function handle(ctx) {
+            }
+            """
+            "#,
+            )
+            .unwrap();
+            assert!(load("js", &opts).is_ok());
         }
     }
 }
