@@ -51,39 +51,41 @@ pub async fn request(dns: &DNS, request: &Message, timeout: Duration) -> Result<
             let c = TcpClient::builder(*addr).timeout(timeout).build()?;
             c.request(request).await
         }
-        DNS::DoT(addr) => match addr {
-            Address::SocketAddr(addr) => {
-                let c = DoTClient::builder(*addr).timeout(timeout).build()?;
-                c.request(request).await
-            }
-            Address::HostAddr(host_addr) => {
-                let domain = &host_addr.host;
-                let ip = DEFAULT_LOOKUPS.lookup(domain, timeout).await?;
-                let addr = SocketAddr::new(IpAddr::V4(ip), host_addr.port);
-                let c = DoTClient::builder(addr)
-                    .sni(domain.as_ref())
-                    .timeout(timeout)
-                    .build()?;
-                c.request(request).await
-            }
-        },
-        DNS::DoH(doh_addr) => {
-            let dc = match &doh_addr.addr {
-                Address::SocketAddr(addr) => DoHClient::builder(*addr).https(doh_addr.https),
-                Address::HostAddr(addr) => {
-                    let domain = &addr.host;
+        DNS::TLS(addr, insecure) => {
+            match addr {
+                Address::SocketAddr(addr) => DoTClient::builder(*addr),
+                Address::HostAddr(host_addr) => {
+                    let domain = &host_addr.host;
                     let ip = DEFAULT_LOOKUPS.lookup(domain, timeout).await?;
-                    let mut bu = DoHClient::builder(SocketAddr::new(IpAddr::V4(ip), addr.port))
-                        .host(domain)
-                        .https(doh_addr.https);
-
-                    if let Some(path) = &doh_addr.path {
-                        bu = bu.path(path);
-                    }
-                    bu
+                    let addr = SocketAddr::new(IpAddr::V4(ip), host_addr.port);
+                    DoTClient::builder(addr).sni(domain.as_ref())
                 }
             }
-            .build();
+            .insecure(*insecure)
+            .timeout(timeout)
+            .build()?
+            .request(request)
+            .await
+        }
+        DNS::HTTP(doh_addr, insecure) => {
+            let dc = {
+                let mut bu = match &doh_addr.addr {
+                    Address::SocketAddr(addr) => DoHClient::builder(*addr),
+                    Address::HostAddr(addr) => {
+                        let domain = &addr.host;
+                        let ip = DEFAULT_LOOKUPS.lookup(domain, timeout).await?;
+                        DoHClient::builder(SocketAddr::new(IpAddr::V4(ip), addr.port)).host(domain)
+                    }
+                }
+                .https(doh_addr.https)
+                .insecure(*insecure)
+                .timeout(timeout);
+
+                if let Some(path) = &doh_addr.path {
+                    bu = bu.path(path);
+                }
+                bu.build()
+            };
 
             dc.request(request).await
         }

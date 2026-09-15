@@ -6,7 +6,6 @@ use crate::protocol::{Codec, DEFAULT_DOT_PORT, Message};
 use futures::{SinkExt, StreamExt};
 use once_cell::sync::Lazy;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
@@ -40,6 +39,7 @@ dotv4!(aliyun, "dns.alidns.com", 223, 5, 5, 5);
 pub struct DoTClient {
     pool: tls::Pool,
     timeout: Duration,
+    insecure: bool,
 }
 
 impl DoTClient {
@@ -50,6 +50,7 @@ impl DoTClient {
             sni: None,
             addr,
             timeout: Self::DEFAULT_TIMEOUT,
+            insecure: false,
         }
     }
 
@@ -108,11 +109,17 @@ pub struct DoTClientBuilder {
     sni: Option<String>,
     addr: SocketAddr,
     timeout: Duration,
+    insecure: bool,
 }
 
 impl DoTClientBuilder {
     pub fn timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
+        self
+    }
+
+    pub fn insecure(mut self, insecure: bool) -> Self {
+        self.insecure = insecure;
         self
     }
 
@@ -125,15 +132,25 @@ impl DoTClientBuilder {
     }
 
     pub fn build(self) -> Result<DoTClient> {
-        let Self { sni, addr, timeout } = self;
+        let Self {
+            sni,
+            addr,
+            timeout,
+            insecure,
+        } = self;
 
-        let key = match sni {
-            None => (Arc::new(addr.ip().to_string()), addr),
-            Some(sni) => (Arc::new(sni), addr),
-        };
+        let sni = sni.unwrap_or_else(|| addr.ip().to_string());
+        let mut flags = 0u8;
+        if insecure {
+            flags |= tls::FLAG_INSECURE;
+        }
 
-        let pool = tls::get(key)?;
-        Ok(DoTClient { pool, timeout })
+        let pool = tls::get(&sni, addr, flags)?;
+        Ok(DoTClient {
+            pool,
+            timeout,
+            insecure,
+        })
     }
 }
 
